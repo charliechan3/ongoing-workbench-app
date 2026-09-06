@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: ongoing-workbench
+  # 数据存储模式切换：APP_MODE=local（默认，H2 文件库）| cloud（云端数据库）
+  # 具体数据源配置见 application-local.yml / application-cloud.yml
+  profiles:
+    active: ${APP_MODE:local}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+  jackson:
+    time-zone: GMT+8
+
+server:
+  port: 8080
+  compression:
+    enabled: true
+  error:
+    include-message: always
+
+app:
+  # 多端/局域网访问时用 APP_CORS_ORIGINS 追加来源（逗号分隔），如 http://192.168.1.10:5173
+  cors-origins: ${APP_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  jwt:
+    # JWT 签名密钥。本应用是本地个人部署，故给开发默认值；
+    # 若对外/多机部署（含 cloud 模式），务必用环境变量 APP_JWT_SECRET 覆盖为 32+ 位随机字符串。
+    secret: ongoing-workbench-dev-secret-8f3c1a9e2b7d4f6a5c8e0d1b2a3c4d5e
+    # token 有效期（小时），默认 30 天
+    ttl-hours: 720

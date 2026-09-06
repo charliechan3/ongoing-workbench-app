@@ -1,0 +1,13 @@
+# ========== local 模式：H2 文件库（单机默认） ==========
+# 数据文件相对后端进程工作目录：backend/data/workbench.mv.db
+# 启动必须 cd backend，否则会在其他目录生成新的空库
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/workbench;MODE=MySQL;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  h2:
+    console:
+      enabled: true
+      path: /h2-console

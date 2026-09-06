@@ -1,0 +1,31 @@
+# ========== cloud 模式：云端数据库（多端同步） ==========
+# 启用方式：APP_MODE=cloud 并提供以下环境变量（驱动可省略，Spring Boot 会按 URL 自动选择）：
+#
+# --- Supabase（PostgreSQL，已选定方案）---
+#   控制台 Project Settings → Database → Connection string → Session pooler
+#   CLOUD_DB_URL   jdbc:postgresql://aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+#                  （直接连接是 IPv6-only，国内家用宽带大多无 IPv6，务必用 pooler 域名）
+#   CLOUD_DB_USER  postgres.<项目ref>        ← 注意带项目前缀，不是纯 postgres
+#   CLOUD_DB_PASS  控制台显示的数据库密码（不是账号密码）
+#   可选覆盖：CLOUD_DB_DRIVER（默认按 URL 自动推断，PG 即 org.postgresql.Driver）
+#
+# --- MySQL 兼容库（TiDB Cloud 等）备用 ---
+#   CLOUD_DB_URL   jdbc:mysql://<host>:4000/ongoing?sslMode=VERIFY_IDENTITY&enabledTLSProtocols=TLSv1.2,TLSv1.3&serverTimezone=GMT%2B8
+#   CLOUD_DB_USER  <前缀>.root
+#
+# 建议同时覆盖 JWT 密钥：APP_JWT_SECRET（32+ 位随机字符串）
+# 说明：库可空，ddl-auto=update 会按实体自动建表；本地数据上云用设置页备份导出 → 云端恢复导入。
+spring:
+  datasource:
+    url: ${CLOUD_DB_URL:}
+    username: ${CLOUD_DB_USER:}
+    password: ${CLOUD_DB_PASS:}
+    hikari:
+      # 云库网络抖动时快速失败并复用连接池
+      connection-timeout: 10000
+      maximum-pool-size: 5
+      minimum-idle: 1
+  # 云端不开放 H2 控制台（local 模式专属）
+  h2:
+    console:
+      enabled: false
