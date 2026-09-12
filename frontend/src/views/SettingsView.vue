@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useDataStore, today } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
 import { api } from '../api'
@@ -8,6 +8,16 @@ import Modal from '../components/Modal.vue'
 const store = useDataStore()
 const auth = useAuthStore()
 const tab = ref('backup') // backup | pref | account
+
+/* 后端存储模式：local（本地 H2 文件库）| cloud（云端数据库）。
+   由 /auth/status 返回，用于「数据说明」里给出与实际一致的存储位置。 */
+const serverMode = ref('local')
+onMounted(async () => {
+  try {
+    const s = await api.auth.status()
+    serverMode.value = s.mode === 'cloud' ? 'cloud' : 'local'
+  } catch { /* 拿不到就按本地文案兜底 */ }
+})
 
 /* ===== 账号与安全 ===== */
 const nickDraft = ref(auth.user?.nickname || '')
@@ -158,7 +168,8 @@ async function savePref() {
       <div class="card mt-16">
         <h3 style="font-size:15px;margin-bottom:6px">数据说明</h3>
         <ul class="muted" style="padding-left:18px;line-height:2">
-          <li>数据存储在后端 H2 文件数据库（<span class="mono">backend/data/workbench.mv.db</span>），删除前端缓存不影响数据。</li>
+          <li v-if="serverMode === 'cloud'">数据存储在云端数据库（多设备登录同一账号即可共享），删除前端缓存不影响数据。</li>
+          <li v-else>数据存储在后端 H2 文件数据库（<span class="mono">backend/data/workbench.mv.db</span>），删除前端缓存不影响数据。</li>
           <li>覆盖恢复将清空现有数据后整体替换；合并恢复保留现有数据，ID 冲突时自动为新记录生成新 ID 并重写关联。</li>
           <li>所有统计数据（番茄、工时、完成数）均从操作记录实时计算。</li>
         </ul>
