@@ -1,7 +1,9 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useDataStore, projectProgress, today, isRepeat, sortProjectCards, priOrd as _priOrd } from '../stores/data'
+import { useDataStore, projectProgress, today, isRepeat, sortProjectCards, priOrd as _priOrd, checklistItemsOf } from '../stores/data'
+import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
+import Checklist from '../components/Checklist.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import ProgressBar from '../components/ProgressBar.vue'
 
@@ -179,6 +181,17 @@ async function delAction(a) {
   await store.removeAction(a.id)
 }
 
+/* ---- 列表内联改名：双击行动名就地编辑（替代原来的 ✎ 弹窗；✎ 仍保留，可改名之外的字段） ----
+   updateAction 会把 name 一并同步到待办侧的投影条目，两边名字不会脱钩 */
+const { renamingId, renameText, startRename, commitRename, cancelRename, renameRef } =
+  useInlineRename(async (id, text) => {
+    const a = store.actions.find(x => x.id === id)
+    if (!a) return
+    if (!text) { store.toast('行动名称不能为空', 'err'); return }
+    if (text === a.name) return
+    await store.updateAction(id, { name: text }, { msg: '已重命名' })
+  })
+
 /* ---- 完成情况弹窗（行动侧，与绑定待办双向同步） ---- */
 const showCompletion = ref(false)
 const completionTarget = ref(null)
@@ -215,6 +228,17 @@ async function submitPomoCalib() {
   await store.calibrateActionPomo(a, pomoCalibForm.value)
   showPomoCalib.value = false
 }
+
+/* ---- 子项（把一条行动拆成若干小步骤）----
+   子项只有名字/完成状态/排序，交互全在 Checklist 组件里；这里只管"这条行动是否展开子列表"。
+   parent 同时带 actionId 与该行动的投影 todo id：子项可能落在任一侧，读取取并集，
+   保证「进行中」与「待办」两侧看到同一份子项。 */
+const ckOpen = ref({})
+const ckItemsOf = (a) => checklistItemsOf(store.checklist, { actionId: a.id, todoId: actTodo(a)?.id })
+const ckTotal = (a) => ckItemsOf(a).length
+const ckDone = (a) => ckItemsOf(a).filter(i => i.done).length
+const ckShown = (a) => ckOpen.value[a.id] ?? ckTotal(a) > 0
+const toggleChecklist = (a) => { ckOpen.value = { ...ckOpen.value, [a.id]: !ckShown(a) } }
 
 /* ===== 工作笔记 ===== */
 const notes = computed(() => [...store.notes].sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || '')))
@@ -371,17 +395,27 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
               <button class="icon-btn" @click="delTask(t)">🗑</button>
             </div>
           </div>
-          <div v-for="a in sortActions(taskActions(t.id))" :key="a.id" class="act-line">
+          <div v-for="a in sortActions(taskActions(t.id))" :key="a.id" class="act-block">
+          <div class="act-line">
             <div class="checkbox" :class="{ on: actDoneNow(a) }" @click="store.completeAction(a)">✓</div>
-            <span class="grow" :style="{ textDecoration: actDoneNow(a) ? 'line-through' : 'none', color: actDoneNow(a) ? 'var(--text-3)' : 'inherit' }">{{ a.name }}</span>
+            <input v-if="renamingId === a.id" :ref="renameRef" v-model="renameText" class="grow rename-input"
+                   @keydown.enter.prevent="commitRename(a.id)" @keydown.esc.prevent="cancelRename"
+                   @blur="commitRename(a.id)" />
+            <span v-else class="grow" :style="{ textDecoration: actDoneNow(a) ? 'line-through' : 'none', color: actDoneNow(a) ? 'var(--text-3)' : 'inherit' }"
+                  title="双击可改名" @dblclick.stop="startRename(a.id, a.name)">{{ a.name }}</span>
             <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
             <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
                     :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
                     @click="openCompletion(a)">📝</button>
             <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
             <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
+            <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
+                    :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
+                    @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
             <button class="icon-btn" @click="openAction(a, a.taskId)">✎</button>
             <button class="icon-btn" @click="delAction(a)">🗑</button>
+          </div>
+          <Checklist v-if="ckShown(a)" :action-id="a.id" :todo-id="actTodo(a)?.id || ''" />
           </div>
           <div v-if="!taskActions(t.id).length" class="muted" style="padding:4px 0 0">暂无行动，点击「＋ 行动」添加</div>
         </div>
@@ -389,17 +423,27 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
         <!-- 独立行动 -->
         <div v-if="projActions.length" class="card mb-16">
           <div class="mb-8" style="font-weight:600">独立行动</div>
-          <div v-for="a in projActionsSorted" :key="a.id" class="act-line">
+          <div v-for="a in projActionsSorted" :key="a.id" class="act-block">
+          <div class="act-line">
             <div class="checkbox" :class="{ on: actDoneNow(a) }" @click="store.completeAction(a)">✓</div>
-            <span class="grow" :style="{ textDecoration: actDoneNow(a) ? 'line-through' : 'none', color: actDoneNow(a) ? 'var(--text-3)' : 'inherit' }">{{ a.name }}</span>
+            <input v-if="renamingId === a.id" :ref="renameRef" v-model="renameText" class="grow rename-input"
+                   @keydown.enter.prevent="commitRename(a.id)" @keydown.esc.prevent="cancelRename"
+                   @blur="commitRename(a.id)" />
+            <span v-else class="grow" :style="{ textDecoration: actDoneNow(a) ? 'line-through' : 'none', color: actDoneNow(a) ? 'var(--text-3)' : 'inherit' }"
+                  title="双击可改名" @dblclick.stop="startRename(a.id, a.name)">{{ a.name }}</span>
             <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
             <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
                     :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
                     @click="openCompletion(a)">📝</button>
             <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
             <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
+            <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
+                    :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
+                    @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
             <button class="icon-btn" @click="openAction(a, null)">✎</button>
             <button class="icon-btn" @click="delAction(a)">🗑</button>
+          </div>
+          <Checklist v-if="ckShown(a)" :action-id="a.id" :todo-id="actTodo(a)?.id || ''" />
           </div>
         </div>
 
@@ -651,6 +695,9 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 .completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
 .pomo-calib { cursor: pointer; border-bottom: 1px dashed transparent; }
 .pomo-calib:hover { color: var(--primary); border-bottom-color: var(--primary); }
+/* 子项开关：与行动行的其它小按钮同尺寸，全部完成时转绿 */
+.sub-btn { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+.sub-btn.on { color: #2a8f5e; border-color: #a8dbc2; }
 
 .note-card { cursor: pointer; transition: all .18s; }
 .note-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }

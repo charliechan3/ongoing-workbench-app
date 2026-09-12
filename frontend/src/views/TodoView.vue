@@ -1,7 +1,9 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat } from '../stores/data'
+import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf } from '../stores/data'
+import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
+import Checklist from '../components/Checklist.vue'
 
 const store = useDataStore()
 const view = ref('list') // list | calendar
@@ -146,6 +148,27 @@ async function toggleRow(r) {
   if (r.day > today()) { store.toast('未来的日期先不用标记完成', 'err'); return }
   await store.toggleRepeat(actOf(r.todo), r.day)
 }
+
+/* ---- 子项（把一条待办拆成若干小步骤）：行内只需一个开关 + 完成计数 ----
+   子项本身只有名字/完成状态/排序，交互交给 Checklist 组件；
+   这里只负责"该行是否展开子列表"，默认有条目就展开（加完立刻看得见），手动收起后记住选择。
+   绑定行动的待办与行动共用同一份子项，所以 parent 同时带上 actionId 与 todoId。 */
+const ckOpen = ref({})
+const ckItemsOf = (todo) => checklistItemsOf(store.checklist, { actionId: todo.actionId, todoId: todo.id })
+const ckTotal = (todo) => ckItemsOf(todo).length
+const ckDone = (todo) => ckItemsOf(todo).filter(i => i.done).length
+const ckShown = (todo) => ckOpen.value[todo.id] ?? ckTotal(todo) > 0
+const toggleChecklist = (todo) => { ckOpen.value = { ...ckOpen.value, [todo.id]: !ckShown(todo) } }
+
+/* ---- 列表内联改名：双击名字就地编辑（不弹详情窗）；重复实例改的是同一条源待办 ---- */
+const { renamingId, renameText, startRename, commitRename, cancelRename, renameRef } =
+  useInlineRename(async (id, text) => {
+    const t = store.todos.find(x => x.id === id)
+    if (!t) return
+    if (!text) { store.toast('待办内容不能为空', 'err'); return }
+    if (text === t.text) return
+    await store.renameTodo(t, text, { msg: '已重命名' })
+  })
 
 /* ---- 历史分批加载（瀑布流：滚动到底自动追加一批分组） ---- */
 const PAGE = 5
@@ -530,13 +553,17 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
           <span class="muted">{{ g.list.filter(r => r.done).length }}/{{ g.list.length }}</span>
         </div>
         <div class="card" style="padding:6px 10px">
-          <div v-for="r in g.list" :key="r.todo.id" class="todo-row"
-               :draggable="canDrag(r.todo)" :class="{ dragging: drag && drag.id === r.todo.id }"
+          <div v-for="r in g.list" :key="r.todo.id" class="todo-block">
+          <div class="todo-row"
+               :draggable="canDrag(r.todo) && renamingId !== r.todo.id" :class="{ dragging: drag && drag.id === r.todo.id }"
                :title="canDrag(r.todo) ? '拖拽可移动到其他日期' : '重复行动按规则出现，不支持拖拽'"
-               @dragstart="canDrag(r.todo) && dragStart(r.todo, $event)" @dragend="dragEnd">
+               @dragstart="canDrag(r.todo) && renamingId !== r.todo.id && dragStart(r.todo, $event)" @dragend="dragEnd">
             <div class="checkbox" :class="{ on: r.done }" @click="toggleRow(r)">✓</div>
             <div class="grow" style="min-width:0" :style="{ textDecoration: r.done ? 'line-through' : 'none', color: r.done ? 'var(--text-3)' : 'inherit' }">
-              <div class="truncate">{{ r.todo.text }}</div>
+              <input v-if="renamingId === r.todo.id" :ref="renameRef" v-model="renameText" class="rename-input"
+                     @keydown.enter.prevent="commitRename(r.todo.id)" @keydown.esc.prevent="cancelRename"
+                     @blur="commitRename(r.todo.id)" />
+              <div v-else class="truncate" title="双击可改名" @dblclick.stop="startRename(r.todo.id, r.todo.text)">{{ r.todo.text }}</div>
               <div class="flex gap-4" style="margin-top:2px">
                 <span v-if="r.todo.projectId" class="tag gray xs">{{ store.projectMap[r.todo.projectId]?.name }}</span>
                 <span v-if="r.todo.taskId && store.taskMap[r.todo.taskId]" class="tag primary xs">{{ store.taskMap[r.todo.taskId]?.name }}</span>
@@ -547,6 +574,9 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
             <span v-if="(r.todo.pomoCount || 0) > 0 || (r.todo.pomoEstimate || 0) > 0 || r.todo.actionId" class="pomo-cnt" title="已完成番茄/番茄估算">🍅{{ r.todo.pomoCount || 0 }}/{{ r.todo.pomoEstimate || 0 }}</span>
             <button v-if="runningId !== r.todo.id" class="btn sm pomo-btn" :title="store.pomoSession.endAt ? '已有番茄钟进行中，请先结束' : `开始 ${pomoMin} 分钟番茄钟`" @click="startTodoTimer(r.todo)">🍅 专注</button>
             <button v-else class="btn sm danger pomo-btn" title="结束番茄钟" @click="stopTodoTimer">■ {{ fmt(timerLeft) }}</button>
+            <button class="btn sm sub-btn" :class="{ on: ckTotal(r.todo) > 0 && ckDone(r.todo) === ckTotal(r.todo) }"
+                    :title="ckTotal(r.todo) ? `子项 ${ckDone(r.todo)}/${ckTotal(r.todo)}（点击展开/收起）` : '把这条待办拆成多个子项'"
+                    @click="toggleChecklist(r.todo)">☑<span v-if="ckTotal(r.todo)"> {{ ckDone(r.todo) }}/{{ ckTotal(r.todo) }}</span></button>
             <span class="tag" :class="priCls(r.todo.priority)">{{ r.todo.priority }}</span>
             <button class="icon-btn completion-btn" :class="{ on: r.todo.completionNote }"
                     :title="r.todo.completionNote ? '完成情况：' + r.todo.completionNote + '（点击编辑）' : '填写完成情况'"
@@ -554,6 +584,8 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
             <button v-if="!r.todo.actionId" class="icon-btn" title="升级" @click="convertTarget = r.todo; showConvert = true">↗</button>
             <button class="icon-btn" title="详情" @click="openDetail(r.todo)">⋯</button>
             <button class="icon-btn" title="删除" @click="delTodo(r.todo)">✕</button>
+          </div>
+          <Checklist v-if="ckShown(r.todo)" :action-id="r.todo.actionId || ''" :todo-id="r.todo.id" />
           </div>
           <div v-if="!g.list.length" class="empty" style="padding:16px">空</div>
         </div>
@@ -717,6 +749,9 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 
 .pomo-cnt { font-size: 12px; color: var(--primary); font-weight: 600; white-space: nowrap; }
 .pomo-btn { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+/* 子项开关：与番茄按钮同尺寸，全部完成时转绿 */
+.sub-btn { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+.sub-btn.on { color: #2a8f5e; border-color: #a8dbc2; }
 .tag.xs { font-size: 10px; padding: 0 6px; }
 .tag.green { background: #e7f6ee; color: #2a8f5e; }
 .completion-btn.on { background: var(--primary-soft); border-radius: 6px; }

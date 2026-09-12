@@ -32,6 +32,7 @@ public class AccountService {
     @Autowired private WorkLogRepo workLogs;
     @Autowired private NoteRepo notes;
     @Autowired private MediaRepo media;
+    @Autowired private ChecklistItemRepo checklist;
     @Autowired private SettingsRepo settings;
 
     @Transactional
@@ -84,7 +85,7 @@ public class AccountService {
     public void adoptLegacy(String uid) {
         adoptRepo(areas, uid); adoptRepo(projects, uid); adoptRepo(tasks, uid);
         adoptRepo(actions, uid); adoptRepo(todos, uid); adoptRepo(pomodoros, uid); adoptRepo(workLogs, uid);
-        adoptRepo(notes, uid); adoptRepo(media, uid);
+        adoptRepo(notes, uid); adoptRepo(media, uid); adoptRepo(checklist, uid);
         // settings 历史单行(id=main) → 复制给首账号（不能复用被删实体做 merge，先拷字段到新实体）
         settings.findById("main").ifPresent(old -> {
             Settings n = new Settings();

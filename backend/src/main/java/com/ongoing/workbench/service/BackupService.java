@@ -28,6 +28,7 @@ public class BackupService {
     @Autowired private WorkLogRepo workLogs;
     @Autowired private NoteRepo notes;
     @Autowired private MediaRepo media;
+    @Autowired private ChecklistItemRepo checklist;
     @Autowired private SettingsRepo settings;
 
     private final ObjectMapper om = new ObjectMapper();
@@ -36,7 +37,7 @@ public class BackupService {
     public static final String APP_VERSION = "1.1.0";
     private static final List<String> TYPES = List.of(
             "areas", "projects", "tasks", "actions", "todos",
-            "pomodoros", "workLogs", "notes", "media");
+            "checklist", "pomodoros", "workLogs", "notes", "media");
 
     /** 实体类型 → 父级引用字段 → 父级类型（用于合并时重映射） */
     private static final Map<String, List<String>> REFS = Map.of(
@@ -44,9 +45,11 @@ public class BackupService {
             "tasks",    List.of("projectId", "areaId"),
             "actions",  List.of("taskId", "projectId", "areaId"),
             "todos",    List.of("projectId", "taskId"),
+            "checklist", List.of("actionId", "todoId"),
             "notes",    List.of("projectId"));
     private static final Map<String, String> REF_TYPE = Map.of(
-            "areaId", "areas", "projectId", "projects", "taskId", "tasks");
+            "areaId", "areas", "projectId", "projects", "taskId", "tasks",
+            "actionId", "actions", "todoId", "todos");
 
     /* ================= 导出 ================= */
 
@@ -59,6 +62,7 @@ public class BackupService {
         data.put("tasks", tasks.findByOwnerId(uid));
         data.put("actions", actions.findByOwnerId(uid));
         data.put("todos", todos.findByOwnerId(uid));
+        data.put("checklist", checklist.findByOwnerId(uid));
         data.put("pomodoros", pomodoros.findByOwnerId(uid));
         data.put("workLogs", workLogs.findByOwnerId(uid));
         data.put("notes", notes.findByOwnerId(uid));
@@ -196,6 +200,7 @@ public class BackupService {
         tasks.deleteByOwnerId(uid);
         actions.deleteByOwnerId(uid);
         todos.deleteByOwnerId(uid);
+        checklist.deleteByOwnerId(uid);
         pomodoros.deleteByOwnerId(uid);
         workLogs.deleteByOwnerId(uid);
         notes.deleteByOwnerId(uid);
@@ -211,6 +216,7 @@ public class BackupService {
             case "tasks" -> tasks.save(om.convertValue(item, Task.class));
             case "actions" -> actions.save(om.convertValue(item, Action.class));
             case "todos" -> todos.save(om.convertValue(item, Todo.class));
+            case "checklist" -> checklist.save(om.convertValue(item, ChecklistItem.class));
             case "pomodoros" -> pomodoros.save(om.convertValue(item, Pomodoro.class));
             case "workLogs" -> workLogs.save(om.convertValue(item, WorkLog.class));
             case "notes" -> notes.save(om.convertValue(item, Note.class));
@@ -225,6 +231,7 @@ public class BackupService {
             case "tasks" -> tasks.existsByIdAndOwnerId(id, uid);
             case "actions" -> actions.existsByIdAndOwnerId(id, uid);
             case "todos" -> todos.existsByIdAndOwnerId(id, uid);
+            case "checklist" -> checklist.existsByIdAndOwnerId(id, uid);
             case "pomodoros" -> pomodoros.existsByIdAndOwnerId(id, uid);
             case "workLogs" -> workLogs.existsByIdAndOwnerId(id, uid);
             case "notes" -> notes.existsByIdAndOwnerId(id, uid);
@@ -240,6 +247,7 @@ public class BackupService {
             case "tasks" -> tasks.findByOwnerId(uid).stream().map(Task::getId).toList();
             case "actions" -> actions.findByOwnerId(uid).stream().map(Action::getId).toList();
             case "todos" -> todos.findByOwnerId(uid).stream().map(Todo::getId).toList();
+            case "checklist" -> checklist.findByOwnerId(uid).stream().map(ChecklistItem::getId).toList();
             case "pomodoros" -> pomodoros.findByOwnerId(uid).stream().map(Pomodoro::getId).toList();
             case "workLogs" -> workLogs.findByOwnerId(uid).stream().map(WorkLog::getId).toList();
             case "notes" -> notes.findByOwnerId(uid).stream().map(Note::getId).toList();

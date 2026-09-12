@@ -76,6 +76,7 @@ export const api = {
   tasks: crud('tasks'),
   actions: crud('actions'),
   todos: crud('todos'),
+  checklist: crud('checklist'),
   pomodoros: crud('pomodoros'),
   worklogs: crud('worklogs'),
   notes: crud('notes'),

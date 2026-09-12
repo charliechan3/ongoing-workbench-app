@@ -94,6 +94,25 @@ function sameRepeat(a, b) {
   return norm(a) === norm(b)
 }
 
+/* ============ 子项（行动/待办的清单拆分）============
+   子项只有 名字 / 完成状态 / 排序 三个字段，归属字段 actionId 与 todoId 二选一。
+   因为 Todo 是 Action 的投影，同一逻辑对象在两侧都会出现，所以：
+   - 读取：actionId 与 todoId 任意命中即算属于它（投影两侧看到同一份子项）
+   - 写入：优先落在 action 侧（有绑定行动时），否则落在 todo 侧
+   排序按 sort 升序，兜底 createdAt（无 sort 的历史数据也能稳定展示） */
+export function checklistItemsOf(items, parent = {}) {
+  const actionId = parent.actionId || ''
+  const todoId = parent.todoId || ''
+  return (items || [])
+    .filter(c => c && ((actionId && c.actionId === actionId) || (todoId && c.todoId === todoId)))
+    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0) || String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
+}
+// 子项写入的归属（二选一，行动优先）
+export const checklistOwnerOf = (parent = {}) => {
+  const actionId = parent.actionId || ''
+  return { actionId: actionId || null, todoId: actionId ? null : (parent.todoId || null) }
+}
+
 /* ============ 统计 & 计算引擎 ============ */
 
 // 任务进度：由子行动加权平均（复用后端逻辑）
@@ -180,6 +199,7 @@ export const useDataStore = defineStore('data', {
     loading: false,
     areas: [], projects: [], tasks: [], actions: [],
     todos: [], pomodoros: [], worklogs: [], notes: [], medias: [],
+    checklist: [],
     settings: {},    toasts: [],    // 首页番茄钟会话。放在 store 是为了跨页面保持（组件卸载不影响倒计时）。
     // endAt = 结束时间戳(ms)；倒计时始终由 endAt - Date.now() 推导，不靠累加计数。
     // 会话额外持久化到 localStorage（POMO_KEY），刷新页面后由 restorePomoSession() 恢复。
@@ -281,6 +301,8 @@ export const useDataStore = defineStore('data', {
           ])
         this.areas = areas; this.projects = projects; this.tasks = tasks; this.actions = actions
         this.todos = todos; this.pomodoros = pomodoros; this.worklogs = worklogs; this.notes = notes; this.medias = medias
+        // 子项单独取：老版本后端没有 /api/checklist 时（404）降级为空数组，不拖垮其余数据加载
+        try { this.checklist = await api.checklist.list() || [] } catch (e) { this.checklist = [] }
         // 老 Pomodoro 没 minutes 字段（实体 2026-09-12 才加），回填到 duration 让 StatsView 立刻显示真实时长
         for (const p of this.pomodoros) if (p.minutes == null) p.minutes = p.duration || 25
         // 优先级统一为 P1/P2/P3（兼容早期种子数据 high/medium/low，内存归一，展示/排序口径一致）
@@ -305,6 +327,7 @@ export const useDataStore = defineStore('data', {
       this.loading = false
       this.areas = []; this.projects = []; this.tasks = []; this.actions = []
       this.todos = []; this.pomodoros = []; this.worklogs = []; this.notes = []; this.medias = []
+      this.checklist = []
       this.settings = {}
       this.toasts = []
       this.stopPomoSession()
@@ -333,6 +356,62 @@ export const useDataStore = defineStore('data', {
       await api[res].remove(id)
       this[res] = this[res].filter(x => x.id !== id)
       if (!opts.silent) this.toast(opts.msg || '已删除')
+    },
+
+    /* ============ 子项（清单拆分：行动 / 待办 通用）============
+       子项只有名字 + 完成状态 + 排序，不含番茄/优先级/日期，交互只有
+       勾选完成、双击改名、子列表内拖动排序、删除。
+       parent 形如 { actionId, todoId }：读取两者取并集，写入走 checklistOwnerOf（行动优先）。 */
+    _checklistOf(parent) {
+      return checklistItemsOf(this.checklist, parent)
+    },
+
+    /* 新增子项：sort 取同级末尾（最大值 +1），追加在子列表最后 */
+    async addChecklistItem(parent, name, opts = {}) {
+      const text = String(name == null ? '' : name).trim()
+      if (!text) return null
+      const sort = this._checklistOf(parent).reduce((m, c) => Math.max(m, (c.sort ?? 0) + 1), 0)
+      return this.create('checklist', { ...checklistOwnerOf(parent), name: text, done: false, sort }, { silent: true, ...opts })
+    },
+
+    /* 勾选/取消完成（轻操作，不弹提示；父级行动/待办不自动联动完成） */
+    async toggleChecklist(item) {
+      if (!item) return
+      await this.update('checklist', item.id, { done: !item.done }, { silent: true })
+    },
+
+    async renameChecklistItem(item, name, opts = {}) {
+      const text = String(name == null ? '' : name).trim()
+      if (!item || !text || text === item.name) return
+      await this.update('checklist', item.id, { name: text }, { silent: true })
+      if (!opts.silent) this.toast(opts.msg || '已重命名')
+    },
+
+    async removeChecklistItem(item, opts = {}) {
+      if (!item) return
+      await this.remove('checklist', item.id, { silent: true })
+      if (!opts.silent) this.toast(opts.msg || '已删除')
+    },
+
+    /* 拖动排序：按新顺序整表重编号（sort = 下标），只落库真正变化的项。
+       不用"取两端中间值"——sort 是整数列，没有插值空间，反复拖动会退化。 */
+    async reorderChecklist(list) {
+      const jobs = []
+      ;(list || []).forEach((it, i) => {
+        if (!it || (it.sort ?? 0) === i) return
+        jobs.push(this.update('checklist', it.id, { sort: i }, { silent: true }))
+      })
+      if (jobs.length) await Promise.all(jobs)
+    },
+
+    /* 父级被删除时清理其子项（否则会留下不可见、也永远删不掉的孤儿数据） */
+    async _purgeChecklist({ actionId, todoId } = {}) {
+      const hit = this.checklist.filter(c =>
+        (actionId && c.actionId === actionId) || (todoId && c.todoId === todoId))
+      if (!hit.length) return
+      const ids = new Set(hit.map(c => c.id))
+      for (const id of ids) { try { await api.checklist.remove(id) } catch (e) { /* 清理失败不阻塞父级删除 */ } }
+      this.checklist = this.checklist.filter(c => !ids.has(c.id))
     },
 
     /* ============ Todo ↔ Action 双向同步（Todo = 职业发展 Action 的待办投影） ============ */
@@ -431,6 +510,7 @@ export const useDataStore = defineStore('data', {
         await api.todos.remove(todo.id)
         this.todos = this.todos.filter(x => x.id !== todo.id)
       }
+      await this._purgeChecklist({ actionId: id, todoId: todo ? todo.id : null })
       if (!opts.silent) this.toast(opts.msg || '已删除行动及同步待办')
     },
 
@@ -534,6 +614,19 @@ export const useDataStore = defineStore('data', {
       return saved
     },
 
+    /* 列表内联改名：只动名字，其余字段一律不碰（对齐"双击改名"这种轻操作）。
+       已绑定行动时同步回行动 name（updateAction 会再把名字写回投影 todo，互为投影不脱钩）。 */
+    async renameTodo(todo, text, opts = {}) {
+      const name = (text || '').trim()
+      if (!name || name === todo.text) return
+      await this.update('todos', todo.id, { text: name }, { silent: true })
+      if (todo.actionId) {
+        const act = this.actions.find(a => a.id === todo.actionId)
+        if (act && act.name !== name) await this.updateAction(act.id, { name }, { silent: true })
+      }
+      if (!opts.silent) this.toast(opts.msg || '已重命名')
+    },
+
     /* 填写完成情况（弹窗）：todo 与绑定行动双向同步；
        顺带可选标记完成（已完成则不改状态） */
     async saveCompletion(todo, text, opts = {}) {
@@ -558,6 +651,7 @@ export const useDataStore = defineStore('data', {
           this.actions = this.actions.filter(x => x.id !== act.id)
         }
       }
+      await this._purgeChecklist({ actionId: todo.actionId, todoId: todo.id })
       if (!opts.silent) this.toast(opts.msg || '已删除')
     },
 
