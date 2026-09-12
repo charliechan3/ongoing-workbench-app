@@ -11,6 +11,7 @@ public class Area extends OwnedEntity {
     private String id;
     private String name;
     private String note;
+    private String color;
     private Integer sort = 0;
     private String createdAt;
 }

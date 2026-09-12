@@ -77,7 +77,8 @@ const rowRepeatLabel = (todo) => {
 /* ---- 列表分组（历史全部 + 今天至未来三天，按日期倒序） ----
    普通 todo 按 date 落组：历史全保留，未来只到三天内（更远的去日历看）；
    跨日 todo（有 startDate+endDate 的有效区间）除锚点组外，还展开到窗口内的命中日（与日历同口径）；
-   重复 todo 是"实例态"，只展开到今天~未来三天的命中日（历史不重放，完成记录在日历/统计里）。 */
+   重复 todo 是"实例态"，只展开到今天~未来三天的命中日（历史不重放，完成记录在日历/统计里）；
+   date 为空（行动创建时未填开始时间）的 todo → 「未分配」组，固定置顶提醒排期。 */
 const listWindow = computed(() => {
   const base = new Date(today() + 'T00:00:00')
   const names = ['今天', '明天', '后天']
@@ -88,12 +89,16 @@ const listWindow = computed(() => {
   }
   return out
 })
+const UNASSIGNED_KEY = 'unassigned'
 const groups = computed(() => {
   const t = today()
   const horizon = listWindow.value[listWindow.value.length - 1].f
   const winMap = Object.fromEntries(listWindow.value.map(d => [d.f, d]))
   const g = []
   const gmap = {}
+  const unassigned = [] // date 为空的 todo（行动未填开始日期时投影），与日期分组互斥
+  const sortInner = (list) => [...list].sort((x, y) =>
+    x.done - y.done || (x.todo.priority || 'P3').localeCompare(y.todo.priority || 'P3'))
   const push = (f, todo, done, isRep) => {
     const day = winMap[f] || { f, label: f, isToday: f === t }
     if (!gmap[f]) { gmap[f] = { label: day.label, date: f, isToday: day.isToday, list: [] }; g.push(gmap[f]) }
@@ -102,26 +107,38 @@ const groups = computed(() => {
   for (const todo of store.todos) {
     const a = actOf(todo)
     if (isRepeat(a)) continue // 重复待办下面按窗口逐日展开
-    const f = todo.date || t
-    if (f > horizon) continue
-    push(f, todo, todo.status === 'done', false)
+    if (!todo.date) {
+      // 未分配：行动创建时未填开始时间 → 待办没有 date 锚点 → 单独成组 + 置顶
+      unassigned.push({ todo, done: todo.status === 'done', repeat: false, day: UNASSIGNED_KEY })
+      continue
+    }
+    if (todo.date > horizon) continue
+    push(todo.date, todo, todo.status === 'done', false)
   }
   for (const day of listWindow.value) {
     for (const todo of store.todos) {
       const a = actOf(todo)
       if (isRepeat(a)) { if (todoHitsDay(todo, a, day.f)) push(day.f, todo, repeatDoneOn(a, day.f), true); continue }
       // 跨日 todo：区间命中窗口日时逐日展开（锚点日已由上面落组，跳过避免重复）
+      if (!todo.date) continue // 未分配 todo 没有 date，也不会形成有效跨日区间
       const span = todo.startDate && todo.endDate && todo.endDate >= todo.startDate
-      if (span && day.f !== (todo.date || t) && todo.startDate <= day.f && todo.endDate >= day.f) {
+      if (span && day.f !== todo.date && todo.startDate <= day.f && todo.endDate >= day.f) {
         push(day.f, todo, todo.status === 'done', false)
       }
     }
   }
   // 组内：未完成在前（按优先级），已完成沉底
   g.forEach(gr => gr.list.sort((x, y) =>
-    x.done - y.done ||
-    (x.todo.priority || 'P3').localeCompare(y.todo.priority || 'P3')))
-  return g.sort((a, b) => b.date.localeCompare(a.date))
+    x.done - y.done || (x.todo.priority || 'P3').localeCompare(y.todo.priority || 'P3')))
+  // 未分配组固定置顶（用户决策：打开就看见「有什么待办还没排期」）
+  if (unassigned.length) {
+    unassigned.sort((x, y) => x.done - y.done || (x.todo.priority || 'P3').localeCompare(y.todo.priority || 'P3'))
+    g.unshift({ label: '未分配', date: UNASSIGNED_KEY, isToday: false, isUnassigned: true, list: unassigned })
+  }
+  return g.sort((a, b) => {
+    if (a.isUnassigned !== b.isUnassigned) return a.isUnassigned ? -1 : 1
+    return b.date.localeCompare(a.date)
+  })
 })
 // 列表勾选：普通 todo 翻转状态；重复实例按天切换（未来日期禁止提前完成）
 async function toggleRow(r) {
@@ -222,7 +239,9 @@ function byId(e) {
 }
 async function dropOnGroup(g, e) {
   const todo = byId(e); dragEnd()
-  if (!todo || g.date === (todo.date || today())) return
+  if (!todo) return
+  if (g.isUnassigned) return // 未分配组不接拖拽：避免误把已分配 todo 拖进来破坏数据；想要回未分配请在详情清空日期
+  if (g.date === (todo.date || today())) return
   await store.moveTodoDate(todo, g.date)
 }
 async function dropOnDay(d, e) {
@@ -507,7 +526,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
            @dragover.prevent="hoverGroup = g.label" @dragleave="hoverGroup === g.label && (hoverGroup = '')" @drop.prevent="dropOnGroup(g, $event)">
         <div class="group-head">
           <span>{{ g.label }}</span>
-          <span v-if="!g.isToday" class="muted" style="font-size:12px;font-weight:400">{{ g.date }}</span>
+          <span v-if="!g.isToday && !g.isUnassigned" class="muted" style="font-size:12px;font-weight:400">{{ g.date }}</span>
           <span class="muted">{{ g.list.filter(r => r.done).length }}/{{ g.list.length }}</span>
         </div>
         <div class="card" style="padding:6px 10px">

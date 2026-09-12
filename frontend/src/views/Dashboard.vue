@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useDataStore, nextDueDate, isRepeat, today } from '../stores/data'
+import { useDataStore, nextDueDate, isRepeat, today, sortProjectCards } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
 import StatusBadge from '../components/StatusBadge.vue'
 import ProgressBar from '../components/ProgressBar.vue'
@@ -39,7 +39,10 @@ const timerLeft = computed(() =>
 
 const todayTodoRows = computed(() => store.todayTodoRows)
 const todayTodos = computed(() => todayTodoRows.value.slice(0, 8))
-const activeProjects = computed(() => store.projectCards.filter(p => p.status !== 'done').sort((a, b) => b.priority?.localeCompare(a.priority)).slice(0, 6))
+/* 项目进度：取前 6 个进行中的项目。
+   排序统一走 sortProjectCards：先按优先级 P1>P2>P3，再按起止日期倒序。
+   已完成项目不进首页摘要（filter 在前）；sort 之后 slice 保证拿到的就是优先级最高、日期最近的进行中项目 */
+const activeProjects = computed(() => sortProjectCards(store.projectCards.filter(p => p.status !== 'done')).slice(0, 6))
 const dueActions = computed(() => {
   const td = today()
   return store.actions

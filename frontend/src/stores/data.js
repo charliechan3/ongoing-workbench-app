@@ -20,6 +20,27 @@ export const normPriority = (p) => {
 }
 const normPriIn = (list) => (list || []).forEach(x => { if (x) x.priority = normPriority(x.priority) })
 
+/* ============ 项目排序（2026-09-13）============
+   项目列表统一排序口径：
+   1) 已完成的（status === 'done'）放最后，避免视线被沉底项占满
+   2) 优先级从高到低：P1 > P2 > P3（P1 在前）
+   3) 同优先级内按「起止日期」倒序：endDate 优先，其次 startDate，再没就 createdAt
+      字典序即可比（YYYY-MM-DD 的 ISO 格式天然有序），晚的在前
+   4) 真有完全相同的兜底值，按 createdAt 升序保证稳定 */
+export const priOrd = (p) => p === 'P1' ? 0 : p === 'P2' ? 1 : 2
+export function sortProjectCards(list) {
+  return [...list].sort((a, b) => {
+    const ad = a.status === 'done', bd = b.status === 'done'
+    if (ad !== bd) return ad ? 1 : -1
+    const dp = priOrd(a.priority) - priOrd(b.priority)
+    if (dp !== 0) return dp
+    const da = a.endDate || a.startDate || a.createdAt || ''
+    const db = b.endDate || b.startDate || b.createdAt || ''
+    if (da !== db) return da < db ? 1 : -1
+    return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+  })
+}
+
 /* ============ 游客模式种子数据 ============
    游客令牌无账号行、后端返回空数据；这里在 loadAll 后内存注入两个示例领域，
    让游客一进来就有内容可探索。仅存内存（刷新即失效，写请求也不落库），不与真实数据互染。 */
@@ -260,6 +281,8 @@ export const useDataStore = defineStore('data', {
           ])
         this.areas = areas; this.projects = projects; this.tasks = tasks; this.actions = actions
         this.todos = todos; this.pomodoros = pomodoros; this.worklogs = worklogs; this.notes = notes; this.medias = medias
+        // 老 Pomodoro 没 minutes 字段（实体 2026-09-12 才加），回填到 duration 让 StatsView 立刻显示真实时长
+        for (const p of this.pomodoros) if (p.minutes == null) p.minutes = p.duration || 25
         // 优先级统一为 P1/P2/P3（兼容早期种子数据 high/medium/low，内存归一，展示/排序口径一致）
         normPriIn(this.projects); normPriIn(this.tasks); normPriIn(this.actions); normPriIn(this.todos)
         this.settings = settings || {}
@@ -314,11 +337,12 @@ export const useDataStore = defineStore('data', {
 
     /* ============ Todo ↔ Action 双向同步（Todo = 职业发展 Action 的待办投影） ============ */
     // 从 action 字段生成一条投影 todo 的初始数据
+    // date 允许为 null —— 表示行动未填开始日期，对应 todo 进 todo 列表的「未分配」分组（行动没排期就不该硬塞今天）
     _todoFromAction(action) {
       return {
         actionId: action.id,
         text: action.name || '',
-        date: action.startDate || today(),
+        date: action.startDate || null,
         status: action.status === 'done' ? 'done' : 'todo',
         doneDate: action.status === 'done' ? today() : null,
         priority: action.priority || 'P3',
@@ -574,27 +598,28 @@ export const useDataStore = defineStore('data', {
       return dd
     },
 
-    /* 拖拽改期：重复行动不可拖；带 startDate 的跨日 todo/行动整体平移（保持时长）；绑定行动的日期双向同步 */
+    /* 拖拽改期：重复行动不可拖；带 startDate 的跨日 todo/行动整体平移（保持时长）；绑定行动的日期双向同步。
+       todo.date 为空（行动创建时未填开始日期 → "未分配"组里的 todo）的特殊情况也支持：拖到任意一天后双向同步 */
     async moveTodoDate(todo, newDate, opts = {}) {
       if (!newDate) return false
-      const old = todo.date || today()
-      if (newDate === old) return false
+      // 仅在原日期真有值时跳过"无变化"；todo.date 为空时不允许用 today() 兜底对比，否则会把"未分配→今天"的合法移动误判为不动
+      if (todo.date && newDate === todo.date) return false
       const act = todo.actionId ? this.actions.find(a => a.id === todo.actionId) : null
       if (isRepeat(act)) { this.toast('重复行动按规则自动出现，不支持拖拽改期', 'err'); return false }
       const shift = (s, delta) => fmtDate(new Date(parseYmd(s).getTime() + delta))
       // todo 侧：单日改 date；跨日（有 startDate）整体平移
       const tp = { date: newDate }
       if (todo.startDate) {
-        const td = parseYmd(newDate) - parseYmd(todo.startDate)
+        const delta = parseYmd(newDate) - parseYmd(todo.startDate)
         tp.startDate = newDate
-        if (todo.endDate) tp.endDate = shift(todo.endDate, td)
+        if (todo.endDate) tp.endDate = shift(todo.endDate, delta)
       }
       await this.update('todos', todo.id, tp, { silent: true })
-      // 行动侧：同步 startDate（updateAction 会回写 todo 投影），有结束日同样平移
+      // 行动侧：同步 startDate（updateAction 会回写 todo 投影）；act.startDate 为空（"未分配"行动）也允许被设成 newDate，不去算"虚锚点"的平移
       if (act) {
-        const ad = parseYmd(newDate) - parseYmd(act.startDate || old)
+        const delta = act.startDate ? parseYmd(newDate) - parseYmd(act.startDate) : 0
         const ap = { startDate: newDate }
-        if (act.endDate) ap.endDate = shift(act.endDate, ad)
+        if (act.endDate) ap.endDate = shift(act.endDate, delta)
         await this.updateAction(act.id, ap, { silent: true })
       }
       if (!opts.silent) this.toast(`已移至 ${newDate}`)

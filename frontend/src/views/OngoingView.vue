@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useDataStore, projectProgress, today, isRepeat } from '../stores/data'
+import { useDataStore, projectProgress, today, isRepeat, sortProjectCards, priOrd as _priOrd } from '../stores/data'
 import Modal from '../components/Modal.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import ProgressBar from '../components/ProgressBar.vue'
@@ -23,23 +23,82 @@ const notePreview = ref(false)
 const imgInput = ref(null)
 
 /* ===== 区域 ===== */
-const areas = computed(() => store.areas)
-const areasWithStats = computed(() => store.areas.map(a => {
-  const ps = store.projects.filter(p => p.areaId === a.id)
-  return { ...a, projectCount: ps.length, doneCount: ps.filter(p => p.status === 'done').length }
-}))
+// 管理模式开关：开启时区域卡片显示 ⬆⬇✎🗑，关闭时为原本的"筛选"行为
+const manageAreas = ref(false)
+// 排序按 sort 升序（无值/相同时用 createdAt 兜底，保证稳定的展示顺序）
+const areasWithStats = computed(() => {
+  const list = store.areas.map(a => {
+    const ps = store.projects.filter(p => p.areaId === a.id)
+    return { ...a, projectCount: ps.length, doneCount: ps.filter(p => p.status === 'done').length }
+  })
+  return list.slice().sort((x, y) => {
+    const sx = x.sort ?? 0, sy = y.sort ?? 0
+    if (sx !== sy) return sx - sy
+    return String(x.createdAt || '').localeCompare(String(y.createdAt || ''))
+  })
+})
 
-/* ===== 项目 ===== */
+/* 区域移动：与当前展示顺序的相邻项交换 sort 值后落库，UI 立即反映新顺序 */
+async function moveArea(id, dir) {
+  const list = areasWithStats.value
+  const i = list.findIndex(a => a.id === id)
+  const j = i + dir
+  if (i < 0 || j < 0 || j >= list.length) return
+  const cur = list[i], nxt = list[j]
+  // 用一个中间值避免两端 sort 相同时落库后值未变化；先腾位再回写
+  const tmp = cur.sort ?? 0
+  try {
+    await store.update('areas', cur.id, { sort: -((Date.now() % 1e9)) })
+    await store.update('areas', nxt.id, { sort: tmp })
+    await store.update('areas', cur.id, { sort: nxt.sort ?? 0 })
+    store.toast(dir < 0 ? `「${cur.name}」已上移` : `「${cur.name}」已下移`)
+  } catch (e) {
+    store.toast('排序失败，请稍后再试', 'err')
+  }
+}
+
+/* 编辑区域：避开项目表单的默认 priority/status，给一个干净的初值 */
+function openEditArea(a) {
+  modalType.value = 'area'
+  editing.value = a
+  form.value = { name: a.name || '', note: a.note || a.desc || '', color: a.color || '#9b6dff' }
+  showModal.value = true
+}
+
+/* 删除区域前统计子项目数；项目不会被级联删除，需用户后续手动清理或保留为无归属 */
+async function delArea(a) {
+  const ps = store.projects.filter(p => p.areaId === a.id)
+  const msg = ps.length
+    ? `区域「${a.name}」下还有 ${ps.length} 个项目，删除后这些项目将不再属于任何区域。\n\n确定要删除吗？`
+    : `确定删除区域「${a.name}」？`
+  if (!confirm(msg)) return
+  await store.remove('areas', a.id)
+  if (selectedArea.value === a.id) selectedArea.value = 'all'
+}
+
+/* 创建区域：与项目区分默认字段，避免把项目专属的 priority/status 混进去 */
+function openCreateArea() {
+  modalType.value = 'area'
+  editing.value = null
+  form.value = { color: '#9b6dff' }
+  showModal.value = true
+}
+
+/* ===== 项目 =====
+   列表默认排序（统一走 store.sortProjectCards）：
+   1) 已完成沉底  2) 优先级 P1>P2>P3  3) 起止日期倒序（endDate → startDate → createdAt）
+   详情里的行动排序继续走 sortActions（按完成率升序 + 优先级），不与项目列表冲突 */
 const visibleProjects = computed(() => {
   let list = store.projectCards
   if (selectedArea.value !== 'all') list = list.filter(p => p.areaId === selectedArea.value)
-  return list
+  return sortProjectCards(list)
 })
 
 function openCreate(type, data = {}) {
   modalType.value = type
   editing.value = null
-  form.value = { priority: 'P3', status: 'todo', ...data }
+  // 区域默认字段较精简（仅 name/note/color），与项目区分开避免把项目专属字段混进区域
+  form.value = type === 'area' ? { color: '#9b6dff', ...data } : { priority: 'P3', status: 'todo', ...data }
   showModal.value = true
 }
 function openEdit(type, item) {
@@ -79,9 +138,8 @@ const actRate = (a) => {
   const est = actPomoTotal(a)
   return est > 0 ? Math.min(Math.round(((a.pomoCount || 0) / est) * 100), 100) : 0
 }
-const priOrd = (p) => p === 'P1' ? 0 : p === 'P2' ? 1 : 2
-// 项目详情行动排序：完成率升序（未动工的排前面），再按优先级 P1 > P2 > P3
-const sortActions = (list) => [...list].sort((x, y) => actRate(x) - actRate(y) || priOrd(x.priority) - priOrd(y.priority))
+// 行动排序：完成率升序（未动工的排前面），再按优先级 P1 > P2 > P3（priority 排序复用 store.priOrd）
+const sortActions = (list) => [...list].sort((x, y) => actRate(x) - actRate(y) || _priOrd(x.priority) - _priOrd(y.priority))
 const priCls = (p) => p === 'P1' ? 'red' : p === 'P2' ? 'orange' : 'gray'
 const projActionsSorted = computed(() => sortActions(projActions.value))
 
@@ -100,7 +158,8 @@ function openAction(t = null, taskId = null) {
   const estOf = (a) => (a.pomoEstimate != null ? a.pomoEstimate : (actPomoTotal(a) || 0))
   actionForm.value = t
     ? { ...t, repeat: t.repeat ? { ...t.repeat, weekdays: [...(t.repeat.weekdays || [])] } : { type: '' }, pomoEstimate: estOf(t) }
-    : { taskId, projectId: selectedProject.value?.id, areaId: selectedProject.value?.areaId, priority: 'P3', status: 'todo', startDate: today(), repeat: { type: '' }, pomoEstimate: 0 }
+    : { taskId, projectId: selectedProject.value?.id, areaId: selectedProject.value?.areaId, priority: 'P3', status: 'todo', repeat: { type: '' }, pomoEstimate: 0 }
+  // 新建时不预填 startDate —— 留空 = 不排具体日期，对应 todo 进 todo 列表的「未分配」分组
   showActionModal.value = true
 }
 async function saveAction() {
@@ -217,21 +276,33 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
           <button class="seg-btn" :class="{ on: tab === 'projects' }" @click="tab = 'projects'">项目</button>
           <button class="seg-btn" :class="{ on: tab === 'notes' }" @click="tab = 'notes'">笔记</button>
         </div>
-        <button v-if="tab === 'projects'" class="btn primary" @click="openCreate('area')">＋ 新建区域</button>
+        <button v-if="tab === 'projects' && store.areas.length" class="btn" :class="{ primary: manageAreas }" @click="manageAreas = !manageAreas">{{ manageAreas ? '✓ 完成管理' : '管理区域' }}</button>
+        <button v-if="tab === 'projects'" class="btn primary" @click="openCreateArea">＋ 新建区域</button>
         <button v-else-if="tab === 'notes'" class="btn primary" @click="openNote()">＋ 新建笔记</button>
       </div>
     </div>
 
     <!-- ========== 项目 Tab ========== -->
     <template v-if="tab === 'projects'">
-      <!-- 区域卡片 -->
-      <div class="grid-4 mb-16">
-        <div v-for="a in areasWithStats" :key="a.id" class="card area-card" @click="selectedArea = selectedArea === a.id ? 'all' : a.id" :class="{ on: selectedArea === a.id }">
+      <!-- 区域卡片：管理模式下展示 ⬆⬇✎🗑，普通模式下点击筛选；始终按 sort 升序展示 -->
+      <div v-if="store.areas.length || manageAreas" class="grid-4 mb-16">
+        <div v-for="(a, i) in areasWithStats" :key="a.id" class="card area-card" :class="{ on: selectedArea === a.id, manage: manageAreas }"
+             @click="manageAreas ? null : (selectedArea = selectedArea === a.id ? 'all' : a.id)">
           <div class="flex-between">
             <span class="area-name" :style="{ color: a.color || 'var(--primary)' }">{{ a.name }}</span>
             <span class="muted">{{ a.doneCount }}/{{ a.projectCount }}</span>
           </div>
-          <div class="muted truncate mt-8">{{ a.desc }}</div>
+          <div class="muted truncate mt-8">{{ a.note || a.desc }}</div>
+          <div v-if="manageAreas" class="area-manage" @click.stop>
+            <button class="icon-btn" :disabled="i === 0" :title="i === 0 ? '已在最上面' : '上移'" @click="moveArea(a.id, -1)">⬆</button>
+            <button class="icon-btn" :disabled="i === areasWithStats.length - 1" :title="i === areasWithStats.length - 1 ? '已在最下面' : '下移'" @click="moveArea(a.id, 1)">⬇</button>
+            <button class="icon-btn" title="编辑区域" @click="openEditArea(a)">✎</button>
+            <button class="icon-btn danger" title="删除区域" @click="delArea(a)">🗑</button>
+          </div>
+        </div>
+        <div v-if="manageAreas && store.areas.length" class="card add-area" @click="openCreateArea">
+          <div class="new-plus">＋</div>
+          <div class="muted">新建区域</div>
         </div>
       </div>
 
@@ -377,20 +448,25 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
     <!-- 区域/项目 弹窗 -->
     <Modal v-if="showModal" :title="`${editing ? '编辑' : '新建'}${modalType === 'area' ? '区域' : '项目'}`" @close="showModal = false">
       <label class="field"><span>名称</span><input v-model="form.name" class="input" /></label>
-      <label class="field"><span>描述</span><textarea v-model="form.desc" class="textarea" rows="3"></textarea></label>
-      <div class="grid-2">
-        <label class="field"><span>状态</span>
-          <select v-model="form.status" class="select">
-            <option value="todo">待开始</option><option value="doing">进行中</option><option value="done">已完成</option><option value="paused">已暂停</option><option value="quit">已放弃</option>
-          </select>
-        </label>
-        <label class="field"><span>优先级</span>
-          <select v-model="form.priority" class="select">
-            <option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
-          </select>
-        </label>
-      </div>
-      <template v-if="modalType === 'project'">
+      <!-- 区域：仅 name/note/color；项目：保留 status/priority/areaId/desc/起止日期 -->
+      <template v-if="modalType === 'area'">
+        <label class="field"><span>说明</span><textarea v-model="form.note" class="textarea" rows="3" placeholder="一句话说明这个区域聚焦的事…"></textarea></label>
+        <label class="field"><span>颜色</span><input v-model="form.color" type="color" class="input" style="padding:4px;height:36px;width:80px" /></label>
+      </template>
+      <template v-else>
+        <label class="field"><span>描述</span><textarea v-model="form.desc" class="textarea" rows="3"></textarea></label>
+        <div class="grid-2">
+          <label class="field"><span>状态</span>
+            <select v-model="form.status" class="select">
+              <option value="todo">待开始</option><option value="doing">进行中</option><option value="done">已完成</option><option value="paused">已暂停</option><option value="quit">已放弃</option>
+            </select>
+          </label>
+          <label class="field"><span>优先级</span>
+            <select v-model="form.priority" class="select">
+              <option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
+            </select>
+          </label>
+        </div>
         <div class="grid-2">
           <label class="field"><span>所属区域</span>
             <select v-model="form.areaId" class="select">
@@ -452,7 +528,8 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
         </select>
       </label>
       <div class="grid-2">
-        <label class="field"><span>开始日期（将同步到待办）</span><input v-model="actionForm.startDate" type="date" class="input" /></label>
+        <label class="field"><span>开始日期（将同步到待办，可选）</span><input v-model="actionForm.startDate" type="date" class="input" /></label>
+        <p class="muted" style="font-size:12px;margin-top:-4px">不填 = 不排具体日期，对应待办会出现在 todo 列表的「未分配」分组里。</p>
         <label class="field"><span>重复</span>
           <select v-model="actionForm.repeat.type" class="select">
             <option value="">不重复</option><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option>
@@ -546,6 +623,17 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 .area-card { cursor: pointer; border-color: var(--border); transition: all .15s; }
 .area-card:hover { border-color: var(--primary-border); }
 .area-card.on { border-color: var(--primary); background: var(--primary-soft); }
+/* 管理模式：卡片仍可读但失去筛选语义；底栏始终占位不抖动；按钮图标清晰可见 */
+.area-card.manage { cursor: default; }
+.area-card.manage:hover { border-color: var(--border); }
+.area-card.manage.on { background: var(--surface); }
+.area-manage { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.area-manage .icon-btn { font-size: 13px; padding: 4px 6px; }
+.area-manage .icon-btn:disabled { opacity: .3; cursor: not-allowed; }
+.area-manage .icon-btn.danger { color: var(--red, #d9534f); }
+.area-manage .icon-btn.danger:hover { background: #fdecec; }
+.add-area { border-style: dashed; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 96px; color: var(--text-3); cursor: pointer; transition: all .15s; }
+.add-area:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .area-name { font-weight: 700; font-size: 14px; }
 
 .proj-card { cursor: pointer; transition: all .18s ease; display: flex; flex-direction: column; }

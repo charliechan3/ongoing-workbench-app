@@ -20,6 +20,15 @@ function lastNDays(n) {
 const days7 = computed(() => lastNDays(7))
 const days30 = computed(() => lastNDays(30))
 
+/* 工时多源聚合：pomodoros 表（番茄完成的工时）+ worklogs 表中 source≠pomodoro（手动/其他工时）
+   这样无论番茄从哪个入口完成（手动 / autoPomoOnTodo / autoPomoOnAction / 番茄钟到点）都自动计入，
+   不需要在每个 create('pomodoros', ...) 旁再写一条 worklog。 */
+function sumWorkMinutes(f) {
+  const fromPomo = store.pomodoros.filter(p => p.date === f).reduce((s, p) => s + (p.minutes || 25), 0)
+  const fromManual = store.worklogs.filter(w => w.date === f && w.source !== 'pomodoro').reduce((s, w) => s + (w.minutes || 0), 0)
+  return fromPomo + fromManual
+}
+
 /* 番茄趋势（7 日） */
 const pomoData = computed(() => days7.value.map(d => ({
   ...d,
@@ -28,10 +37,10 @@ const pomoData = computed(() => days7.value.map(d => ({
 })))
 const maxPomo = computed(() => Math.max(...pomoData.value.map(d => d.count), 1))
 
-/* 工时（近 7 日） */
+/* 工时（近 7 日） —— 多源聚合（见 sumWorkMinutes） */
 const workData = computed(() => days7.value.map(d => ({
   ...d,
-  minutes: store.worklogs.filter(w => w.date === d.f).reduce((s, w) => s + (w.minutes || 0), 0)
+  minutes: sumWorkMinutes(d.f)
 })))
 const maxWork = computed(() => Math.max(...workData.value.map(d => d.minutes), 1))
 
@@ -92,7 +101,7 @@ const metrics = computed(() => {
   const totalTodos = store.todos.filter(t => week.includes(t.doneDate)).length
   const totalActions = store.actions.filter(a => a.doneDates?.some(dd => week.includes(dd))).length
   const totalPomos = store.pomodoros.filter(p => week.includes(p.date)).length
-  const totalMinutes = store.worklogs.filter(w => week.includes(w.date)).reduce((s, w) => s + (w.minutes || 0), 0)
+  const totalMinutes = week.reduce((s, d) => s + sumWorkMinutes(d), 0)
   const goal = store.settings.dailyGoalMinutes || 0
 
   // 计划偏差：本周计划（近 7 日逐日累计，与上方「本周」指标同口径，含行动投影/重复行动） vs 本周实际完成
@@ -172,7 +181,7 @@ const projSummary = computed(() => {
 })
 
 /* ============ 工时热力图（GitHub 风格） ============ */
-/* 工时口径与「工时记录」一致：worklogs 已包含番茄钟自动写入的工时，直接按日期聚合 */
+/* 工时口径与「工时记录」一致：pomodoros + worklogs(source≠pomodoro)，详见 sumWorkMinutes */
 const heatMode = ref('365') // '365' = 最近365天 | 'year' = 当年
 
 const heatData = computed(() => {
@@ -184,10 +193,14 @@ const heatData = computed(() => {
   const rangeStart = fmtDate(start) // 实际数据区间的第一天（本地时区，与工时记录口径一致）
   // 左端对齐到周日，保证每 7 天一列（GitHub 布局）
   start.setDate(start.getDate() - start.getDay())
-  // 按日聚合工时
+  // 按日聚合工时（多源）
   const byDay = {}
+  for (const p of store.pomodoros) {
+    if (!p.date) continue
+    byDay[p.date] = (byDay[p.date] || 0) + (p.minutes || 25)
+  }
   for (const w of store.worklogs) {
-    if (!w.date) continue
+    if (!w.date || w.source === 'pomodoro') continue
     byDay[w.date] = (byDay[w.date] || 0) + (w.minutes || 0)
   }
   const days = []
@@ -286,7 +299,7 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
         <h3 style="font-size:15px;margin-bottom:14px">工时记录 · 近 7 日（分钟）</h3>
         <div class="bar-chart">
           <div v-for="d in workData" :key="d.f" class="bar-col">
-            <div class="bar-val">{{ d.minutes ? Math.round(d.minutes / 60) + 'h' : '' }}</div>
+            <div class="bar-val">{{ d.minutes ? d.minutes + 'm' : '' }}</div>
             <div class="bar-track">
               <div class="bar-fill work" :style="{ height: (d.minutes / maxWork * 100) + '%' }"></div>
             </div>
