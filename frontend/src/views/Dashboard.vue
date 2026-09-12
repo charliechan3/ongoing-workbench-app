@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useDataStore, nextDueDate, isRepeat, today, sortProjectCards } from '../stores/data'
 import { useAuthStore } from '../stores/auth'
+import { useInlineRename } from '../composables/useInlineRename'
 import StatusBadge from '../components/StatusBadge.vue'
 import ProgressBar from '../components/ProgressBar.vue'
 
@@ -9,6 +10,16 @@ const store = useDataStore()
 const auth = useAuthStore()
 const quickText = ref('')
 const quickPri = ref('P3')
+
+/* 今日到期行动：双击名字就地改名（name 会同步到待办侧投影条目） */
+const { renamingId, renameText, startRename, commitRename, cancelRename, renameRef } =
+  useInlineRename(async (id, text) => {
+    const a = store.actions.find(x => x.id === id)
+    if (!a) return
+    if (!text) { store.toast('行动名称不能为空', 'err'); return }
+    if (text === a.name) return
+    await store.updateAction(id, { name: text }, { msg: '已重命名' })
+  })
 
 /* ===== 问候语 =====
    按当前时段选择问候词（打开首页时取值即可，不必分钟级刷新）；
@@ -199,7 +210,10 @@ onBeforeUnmount(stopTick)
           <div v-for="a in dueActions" :key="a.id" class="act-row">
             <div class="checkbox" :class="{ on: false }" @click="store.completeAction(a)">✓</div>
             <div class="grow">
-              <div class="truncate">{{ a.name }}</div>
+              <input v-if="renamingId === a.id" :ref="renameRef" v-model="renameText" class="rename-input"
+                     @keydown.enter.prevent="commitRename(a.id)" @keydown.esc.prevent="cancelRename"
+                     @blur="commitRename(a.id)" />
+              <div v-else class="truncate" title="双击可改名" @dblclick.stop="startRename(a.id, a.name)">{{ a.name }}</div>
               <div class="muted">{{ store.taskMap[a.taskId]?.name || store.projectMap[a.projectId]?.name || '' }}</div>
             </div>
             <span class="tag red">今天</span>

@@ -120,6 +120,24 @@ button { font-family: inherit; }
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
 
+/* 列表内联重命名：双击名称就地编辑，尺寸贴住原文本行，不撑高列表 */
+.rename-input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  text-decoration: none; /* 已完成条目外层有删除线，编辑时不带到输入框 */
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
 /* 下拉框 —— 现代圆角卡片式：去掉原生外观，自绘箭头 + 圆角卡片 + 悬停/聚焦反馈 */
 .select {
   appearance: none;
