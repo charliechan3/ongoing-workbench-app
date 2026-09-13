@@ -168,7 +168,7 @@ onBeforeUnmount(stopTick)
       </div>
     </div>
 
-    <div class="grid-2" style="grid-template-columns: 1.2fr .8fr; align-items:start">
+    <div class="grid-2 dash-cols">
       <!-- 左列 -->
       <div class="flex-col gap-16" style="display:flex;flex-direction:column;gap:16px">
         <!-- 快速创建 -->
@@ -176,7 +176,7 @@ onBeforeUnmount(stopTick)
           <div class="quick-add">
             <span class="qa-ico">＋</span>
             <input v-model="quickText" class="qa-input" placeholder="快速添加待办，回车创建…" @keydown.enter="quickAdd" />
-            <select v-model="quickPri" class="select" style="width:86px">
+            <select v-model="quickPri" class="select qa-pri">
               <option value="P1">P1</option>
               <option value="P2">P2</option>
               <option value="P3">P3</option>
@@ -265,8 +265,9 @@ onBeforeUnmount(stopTick)
 .quick-add { display: flex; align-items: center; gap: 10px; }
 .qa-ico { color: var(--primary); font-size: 18px; font-weight: 600; }
 .qa-input { flex: 1; border: none; outline: none; font-size: 14.5px; font-family: inherit; color: var(--text); background: transparent; padding: 6px 0; }
+.qa-pri { width: 86px; flex-shrink: 0; }
 
-.proj-row { display: grid; grid-template-columns: 1fr 120px 44px; align-items: center; gap: 10px; padding: 8px 0; }
+.proj-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 44px; align-items: center; gap: 10px; padding: 8px 0; }
 .proj-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .proj-bar { width: 120px; }
 
@@ -287,4 +288,37 @@ onBeforeUnmount(stopTick)
 }
 .pomo-time { position: relative; font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
 .pomo-ring .muted { position: absolute; bottom: 38px; }
+
+/* 左右两栏在桌面按 1.2 : 0.8 分栏（原先写在行内样式里，媒体查询无法覆盖，
+   改为类名以便窄屏切换为单列） */
+.dash-cols { grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); align-items: start; }
+
+/* ===================== 移动端（≤ 820px） ===================== */
+@media (max-width: 820px) {
+  /* 单列纵向排布：统计卡 → 快速创建 → 项目进度 → 今日到期 → 番茄钟 → 今日待办 */
+  .dash-cols { grid-template-columns: 1fr; }
+
+  /* 快速创建：输入框独占一行，优先级与「添加」按钮落到下一行 */
+  .quick-add { flex-wrap: wrap; row-gap: 10px; }
+  .qa-input { flex: 1 1 calc(100% - 30px); }
+  .quick-add .btn { flex: 1; justify-content: center; }
+  .qa-pri { width: 92px; }
+
+  /* 项目进度行：名称一行，进度条 + 百分比一行 */
+  .proj-row { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+  .proj-row > .flex { flex: 1 1 100%; }
+  .proj-bar { flex: 1 1 auto; width: auto; }
+
+  /* 统计卡：两列铺满，图标略收 */
+  .stat-card { gap: 10px; padding: 13px 12px; }
+  .stat-ico { width: 34px; height: 34px; border-radius: 10px; font-size: 16px; }
+  .stat-num { font-size: 19px; }
+
+  /* 番茄钟：进度环按屏宽缩放，避免在 320px 机型上顶到卡片边缘 */
+  .pomo-ring { width: 132px; height: 132px; }
+  .pomo-time { font-size: 28px; }
+  .pomo-ring .muted { bottom: 32px; }
+
+  .act-row { padding: 10px 4px; }
+}
 </style>

@@ -359,7 +359,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
       <template v-else>
         <button class="btn ghost sm mb-16" @click="selectedProject = null">‹ 返回项目列表</button>
         <div class="card mb-16">
-          <div class="flex-between">
+          <div class="flex-between proj-head">
             <div class="flex gap-12">
               <span class="proj-color big" :style="{ background: selectedProject.color || '#9b6dff' }"></span>
               <div>
@@ -403,17 +403,21 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
                    @blur="commitRename(a.id)" />
             <span v-else class="grow" :style="{ textDecoration: actDoneNow(a) ? 'line-through' : 'none', color: actDoneNow(a) ? 'var(--text-3)' : 'inherit' }"
                   title="双击可改名" @dblclick.stop="startRename(a.id, a.name)">{{ a.name }}</span>
-            <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
-            <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
-                    :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
-                    @click="openCompletion(a)">📝</button>
-            <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
-            <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
-            <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
-                    :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
-                    @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
-            <button class="icon-btn" @click="openAction(a, a.taskId)">✎</button>
-            <button class="icon-btn" @click="delAction(a)">🗑</button>
+            <!-- 操作区独立成组：桌面端紧跟行动名、贴行尾（视觉同重构前）；
+                 手机上整体换到第二行并在内部继续换行（见 scoped 样式的 .row-acts） -->
+            <div class="row-acts">
+              <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
+              <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
+                      :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
+                      @click="openCompletion(a)">📝</button>
+              <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
+              <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
+              <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
+                      :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
+                      @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
+              <button class="icon-btn" @click="openAction(a, a.taskId)">✎</button>
+              <button class="icon-btn" @click="delAction(a)">🗑</button>
+            </div>
           </div>
           <Checklist v-if="ckShown(a)" :action-id="a.id" :todo-id="actTodo(a)?.id || ''" />
           </div>
@@ -431,17 +435,21 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
                    @blur="commitRename(a.id)" />
             <span v-else class="grow" :style="{ textDecoration: actDoneNow(a) ? 'line-through' : 'none', color: actDoneNow(a) ? 'var(--text-3)' : 'inherit' }"
                   title="双击可改名" @dblclick.stop="startRename(a.id, a.name)">{{ a.name }}</span>
-            <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
-            <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
-                    :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
-                    @click="openCompletion(a)">📝</button>
-            <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
-            <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
-            <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
-                    :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
-                    @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
-            <button class="icon-btn" @click="openAction(a, null)">✎</button>
-            <button class="icon-btn" @click="delAction(a)">🗑</button>
+            <!-- 操作区独立成组：桌面端紧跟行动名、贴行尾（视觉同重构前）；
+                 手机上整体换到第二行并在内部继续换行（见 scoped 样式的 .row-acts） -->
+            <div class="row-acts">
+              <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
+              <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
+                      :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
+                      @click="openCompletion(a)">📝</button>
+              <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
+              <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
+              <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
+                      :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
+                      @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
+              <button class="icon-btn" @click="openAction(a, null)">✎</button>
+              <button class="icon-btn" @click="delAction(a)">🗑</button>
+            </div>
           </div>
           <Checklist v-if="ckShown(a)" :action-id="a.id" :todo-id="actTodo(a)?.id || ''" />
           </div>
@@ -635,9 +643,9 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 
     <!-- 笔记弹窗 -->
     <Modal v-if="showNoteModal" :title="noteForm.id ? '编辑笔记' : '新建笔记'" wide @close="showNoteModal = false">
-      <div class="flex gap-8 mb-12">
+      <div class="flex gap-8 mb-12 note-head">
         <input v-model="noteForm.title" class="input grow" placeholder="笔记标题" />
-        <select v-model="noteForm.projectId" class="select" style="width:170px">
+        <select v-model="noteForm.projectId" class="select note-cat">
           <option value="">未分类</option>
           <option v-for="p in store.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
         </select>
@@ -692,6 +700,8 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 .task-block { border-left: 3px solid var(--primary-border); }
 .act-line { display: flex; align-items: center; gap: 10px; padding: 6px 4px 6px 26px; border-radius: 8px; }
 .act-line:hover { background: var(--surface-2); }
+/* 行尾操作区：桌面端与行动名同排、贴行尾（视觉同重构前）；手机端换行规则见移动端媒体查询 */
+.row-acts { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
 .completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
 .pomo-calib { cursor: pointer; border-bottom: 1px dashed transparent; }
 .pomo-calib:hover { color: var(--primary); border-bottom-color: var(--primary); }
@@ -706,4 +716,40 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 
 .wd-chip { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); cursor: pointer; font-size: 12px; }
 .wd-chip.on { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* 笔记弹窗：标题左侧、分类右侧；手机上分类整体落到下一行铺满 */
+.note-head { align-items: center; }
+.note-cat { width: 170px; flex-shrink: 0; }
+
+/* ===================== 移动端（≤ 820px） ===================== */
+@media (max-width: 820px) {
+  /* 项目/笔记切换与操作按钮：整行铺满，均分，触屏更好按 */
+  .seg { display: flex; width: 100%; }
+  .seg-btn { flex: 1; padding: 8px 0; font-size: 13.5px; }
+
+  /* 区域卡片：管理模式的四个小图标按钮加大热区 */
+  .area-manage { gap: 4px; }
+  .area-manage .icon-btn { width: 34px; height: 34px; font-size: 15px; }
+
+  /* 行动行：勾选框 + 行动名独占首行，操作按钮整体落到第二行 */
+  .act-line { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; padding: 10px 4px 10px 8px; }
+  .act-line > .grow { flex: 1 1 calc(100% - 30px); } /* 100% - 勾选框(20) - 间距(10) */
+  .row-acts { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 6px; row-gap: 8px; }
+  .act-block + .act-block { border-top: 1px solid var(--border); }
+  .act-line .icon-btn { width: 32px; height: 32px; min-width: 32px; font-size: 14px; }
+  .sub-btn { padding: 6px 11px; min-height: 32px; }
+
+  /* 项目详情头部：标题块与操作按钮改为上下堆叠（按钮组自身靠 .flex 的换行继续折行） */
+  .proj-head { flex-direction: column; align-items: stretch; gap: 12px; }
+
+  /* 笔记弹窗：标题与分类改为两行 */
+  .note-head { flex-wrap: wrap; }
+  .note-head .input { flex: 1 1 100%; }
+  .note-cat { width: 100%; flex: 1 1 100%; }
+  .preview-md { min-height: 160px; padding: 12px; }
+
+  .wd-chip { width: 34px; height: 34px; font-size: 13px; }
+  .new-card { min-height: 120px; }
+  .add-area { min-height: 84px; }
+}
 </style>

@@ -321,7 +321,7 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
           <div class="pie-legend">
             <div v-for="s in pomoTaskDist.segs" :key="s.name" class="legend-row">
               <i :style="{ background: s.color }"></i>
-              <span class="truncate" style="max-width:260px">{{ s.name }}</span>
+              <span class="truncate lg-name">{{ s.name }}</span>
               <span class="muted mono" style="margin-left:auto;white-space:nowrap">{{ s.count }} 个 · {{ s.pct.toFixed(0) }}%</span>
             </div>
           </div>
@@ -398,7 +398,7 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
         </div>
       </div>
       <div v-for="p in projDist" :key="p.name" class="dist-row">
-        <span class="muted truncate" style="width:110px">{{ p.name }}</span>
+        <span class="muted truncate dist-name">{{ p.name }}</span>
         <div class="grow"><ProgressBar :value="p.total ? Math.round(p.done / p.total * 100) : 0" /></div>
         <span class="muted mono" style="width:52px;text-align:right">{{ p.done }}/{{ p.total }}</span>
       </div>
@@ -434,6 +434,7 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
 .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
 .dist-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.dist-name { width: 110px; flex-shrink: 0; }
 
 /* 分布块顶部汇总徽标 */
 .dist-summary { display: inline-flex; gap: 8px; }
@@ -443,15 +444,43 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
 .ds-item.done i { background: var(--green, #30a46c); }
 .ds-item.undone i { background: var(--primary); }
 
-/* 三图并列：柱状图 2.5:2.5、饼图 3；网格默认 stretch 保证三卡等高 */
-.charts-grid { display: grid; grid-template-columns: 2.5fr 2.5fr 3fr; gap: 14px; }
+/* 三图并列：柱状图 2.5:2.5、饼图 3；网格默认 stretch 保证三卡等高。
+   用 minmax(0, …) 而非裸 fr：裸 fr 的下限是内容最小宽，含 nowrap 文本时会被撑破容器 */
+.charts-grid { display: grid; grid-template-columns: minmax(0, 2.5fr) minmax(0, 2.5fr) minmax(0, 3fr); gap: 14px; }
 .pie-card { display: flex; flex-direction: column; }
 @media (max-width: 1100px) {
-  .charts-grid { grid-template-columns: 1fr 1fr; }
+  .charts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pie-card { grid-column: 1 / -1; } /* 平板宽度下饼图独占一行，图例稳定在环图右侧 */
 }
 @media (max-width: 620px) {
-  .charts-grid { grid-template-columns: 1fr; } /* 手机每行一图 */
+  .charts-grid { grid-template-columns: minmax(0, 1fr); } /* 手机每行一图 */
+}
+
+/* ===================== 移动端（≤ 820px） ===================== */
+@media (max-width: 820px) {
+  /* 工时热力图：365 天 = 53 列，手机上等比压缩后每格只剩 5px 左右，看不清也点不准。
+     改为固定格子宽度 + 容器横向滚动（与 GitHub 移动端一致），纵向刻度保持不变避免错位。 */
+  .heat-wrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .heat-body { min-width: 560px; }
+
+  /* 图例名称改为占满剩余宽度（原先固定 max-width:260px 会与右侧数量一起把行挤爆） */
+  .lg-name { flex: 1; min-width: 0; max-width: none; }
+
+  .dist-name { width: 82px; }
+  .m-num { font-size: 23px; }
+  .metric { padding: 13px 14px; }
+  .bar-chart { height: 150px; }
+  .trend-wrap, .trend-bars { height: 158px; }
+  .pie { width: 112px; height: 112px; }
+  .pie-hole { inset: 24px; }
+  /* 热力图区间切换按钮加高，方便触摸 */
+  .heat-tabs button { padding: 7px 12px; }
+  .ds-item { padding: 3px 9px; }
 }
 
 .pie-wrap { flex: 1; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -461,6 +490,8 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
 .pie-legend { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .legend-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
 .legend-row i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+/* 图例名称：桌面限宽避免长项目名挤压右侧数量，窄屏改为自适应占满剩余宽度 */
+.lg-name { max-width: 260px; }
 
 /* 工时热力图 */
 .heat-tabs { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }

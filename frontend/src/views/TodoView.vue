@@ -363,10 +363,18 @@ async function delTodo(t) {
   if (!confirm(`删除待办「${t.text}」？${extra}`)) return
   await store.removeTodo(t)
 }
+/* 详情弹窗里发起升级：手机上行内不放「↗ 升级」（操作行会多挤一个图标而多折一行），
+   统一收到详情弹窗，能力不减 */
+function convertFromDetail() {
+  convertTarget.value = detailTodo.value
+  showDetail.value = false
+  showConvert.value = true
+}
 function openDetail(todo) {
   const d = { ...todo }
   const a = actOf(d)
   const rep = isRepeat(a) ? a.repeat : null
+  dOrigText.value = d.text || ''
   dWasRep.value = !!(rep && rep.type)
   dOrigEnd.value = d.endDate || ''
   // 回填当前重复规则（若绑定行动有重复）
@@ -384,6 +392,7 @@ const dWeek = ref([1, 3, 5])
 const dDaysText = ref('1,15')
 const dWasRep = ref(false) // 打开时原本就是重复待办（用于取消重复时清理旧的重复终止日）
 const dOrigEnd = ref('')   // 打开时的原始结束日期
+const dOrigText = ref('')  // 打开时的原始内容（用于判断是否需要同步重命名绑定行动）
 const dHasRep = computed(() => !!dRepType.value)
 const dRepObj = computed(() => {
   const t = dRepType.value
@@ -412,6 +421,12 @@ const dPreview = computed(() => {
 })
 async function saveDetail() {
   const d = detailTodo.value
+  // 详情弹窗是触屏设备上唯一的内容修改入口（行内双击改名在手机上不可用），
+  // 这里改名要走 renameTodo 而不是直接写字段：绑定行动的待办需要同步行动名，否则两侧会脱钩
+  const nextText = (d.text || '').trim()
+  if (!nextText) { store.toast('待办内容不能为空', 'err'); return }
+  if (nextText !== dOrigText.value) await store.renameTodo(d, nextText, { silent: true })
+  d.text = nextText
   const rep = dRepObj.value
   if (rep) {
     if (rep.type === 'weekly' && !rep.weekdays.length) { store.toast('请至少选择一个星期', 'err'); return }
@@ -571,19 +586,24 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
                 <span v-if="r.todo.actionId" class="tag green xs">行动</span>
               </div>
             </div>
-            <span v-if="(r.todo.pomoCount || 0) > 0 || (r.todo.pomoEstimate || 0) > 0 || r.todo.actionId" class="pomo-cnt" title="已完成番茄/番茄估算">🍅{{ r.todo.pomoCount || 0 }}/{{ r.todo.pomoEstimate || 0 }}</span>
-            <button v-if="runningId !== r.todo.id" class="btn sm pomo-btn" :title="store.pomoSession.endAt ? '已有番茄钟进行中，请先结束' : `开始 ${pomoMin} 分钟番茄钟`" @click="startTodoTimer(r.todo)">🍅 专注</button>
-            <button v-else class="btn sm danger pomo-btn" title="结束番茄钟" @click="stopTodoTimer">■ {{ fmt(timerLeft) }}</button>
-            <button class="btn sm sub-btn" :class="{ on: ckTotal(r.todo) > 0 && ckDone(r.todo) === ckTotal(r.todo) }"
-                    :title="ckTotal(r.todo) ? `子项 ${ckDone(r.todo)}/${ckTotal(r.todo)}（点击展开/收起）` : '把这条待办拆成多个子项'"
-                    @click="toggleChecklist(r.todo)">☑<span v-if="ckTotal(r.todo)"> {{ ckDone(r.todo) }}/{{ ckTotal(r.todo) }}</span></button>
-            <span class="tag" :class="priCls(r.todo.priority)">{{ r.todo.priority }}</span>
-            <button class="icon-btn completion-btn" :class="{ on: r.todo.completionNote }"
-                    :title="r.todo.completionNote ? '完成情况：' + r.todo.completionNote + '（点击编辑）' : '填写完成情况'"
-                    @click="openCompletion(r.todo)">📝</button>
-            <button v-if="!r.todo.actionId" class="icon-btn" title="升级" @click="convertTarget = r.todo; showConvert = true">↗</button>
-            <button class="icon-btn" title="详情" @click="openDetail(r.todo)">⋯</button>
-            <button class="icon-btn" title="删除" @click="delTodo(r.todo)">✕</button>
+            <!-- 操作区独立成组：桌面端紧跟文本、贴行尾（视觉与原先一致）；
+                 手机上整体换到第二行，并在自身内部继续换行，避免 10 个控件在
+                 375px 宽度里互相挤压（见 scoped 样式的 .row-acts） -->
+            <div class="row-acts">
+              <span v-if="(r.todo.pomoCount || 0) > 0 || (r.todo.pomoEstimate || 0) > 0 || r.todo.actionId" class="pomo-cnt" title="已完成番茄/番茄估算">🍅{{ r.todo.pomoCount || 0 }}/{{ r.todo.pomoEstimate || 0 }}</span>
+              <button v-if="runningId !== r.todo.id" class="btn sm pomo-btn" :title="store.pomoSession.endAt ? '已有番茄钟进行中，请先结束' : `开始 ${pomoMin} 分钟番茄钟`" @click="startTodoTimer(r.todo)">🍅 专注</button>
+              <button v-else class="btn sm danger pomo-btn" title="结束番茄钟" @click="stopTodoTimer">■ {{ fmt(timerLeft) }}</button>
+              <button class="btn sm sub-btn" :class="{ on: ckTotal(r.todo) > 0 && ckDone(r.todo) === ckTotal(r.todo) }"
+                      :title="ckTotal(r.todo) ? `子项 ${ckDone(r.todo)}/${ckTotal(r.todo)}（点击展开/收起）` : '把这条待办拆成多个子项'"
+                      @click="toggleChecklist(r.todo)">☑<span v-if="ckTotal(r.todo)"> {{ ckDone(r.todo) }}/{{ ckTotal(r.todo) }}</span></button>
+              <span class="tag" :class="priCls(r.todo.priority)">{{ r.todo.priority }}</span>
+              <button class="icon-btn completion-btn" :class="{ on: r.todo.completionNote }"
+                      :title="r.todo.completionNote ? '完成情况：' + r.todo.completionNote + '（点击编辑）' : '填写完成情况'"
+                      @click="openCompletion(r.todo)">📝</button>
+              <button v-if="!r.todo.actionId" class="icon-btn act-upgrade" title="升级" @click="convertTarget = r.todo; showConvert = true">↗</button>
+              <button class="icon-btn" title="详情" @click="openDetail(r.todo)">⋯</button>
+              <button class="icon-btn" title="删除" @click="delTodo(r.todo)">✕</button>
+            </div>
           </div>
           <Checklist v-if="ckShown(r.todo)" :action-id="r.todo.actionId || ''" :todo-id="r.todo.id" />
           </div>
@@ -637,7 +657,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
       <template #foot><button class="btn" @click="showConvert = false">取消</button></template>
     </Modal>
 
-    <!-- 详情弹窗（编辑单条 todo：日期 / 跨日 / 重复规则均可改，与行动编辑一致） -->
+    <!-- 详情弹窗（编辑单条 todo：内容 / 日期 / 跨日 / 重复规则均可改，与行动编辑一致） -->
     <Modal v-if="showDetail" :title="detailTodo.text" @close="showDetail = false">
       <div class="flex gap-8 mb-16" style="flex-wrap:wrap">
         <span class="tag" :class="priCls(detailTodo.priority)">{{ detailTodo.priority }}</span>
@@ -646,6 +666,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
         <span v-if="detailTodo.taskId && store.taskMap[detailTodo.taskId]" class="tag cyan">任务：{{ store.taskMap[detailTodo.taskId]?.name }}</span>
         <span v-if="detailTodo.actionId" class="tag green">已绑定行动（自动同步）</span>
       </div>
+      <label class="field"><span>内容</span><input v-model="detailTodo.text" class="input" placeholder="要做什么？" /></label>
       <label class="field"><span>备注</span><textarea v-model="detailTodo.note" class="textarea" rows="4"></textarea></label>
       <div class="grid-2">
         <label class="field"><span>{{ dHasRep ? '开始日期（生效起）' : '日期' }}</span><input v-model="detailTodo.date" type="date" class="input" /></label>
@@ -684,6 +705,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
       </div>
       <p v-if="dHasRep" class="muted" style="font-size:12px;margin-top:-6px">设置了重复后：待办按规则在日历自动展开、完成按天记录；已绑定行动或纯待办升级时会同步到「进行中」。</p>
       <template #foot>
+        <button v-if="!detailTodo.actionId" class="btn" title="升级为项目或行动" @click="convertFromDetail">升级</button>
         <button class="btn" @click="showDetail = false">取消</button>
         <button class="btn primary" @click="saveDetail">保存</button>
       </template>
@@ -727,6 +749,8 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 .group-head { display: flex; align-items: baseline; gap: 8px; padding: 0 4px 8px; font-weight: 600; font-size: 14px; }
 .todo-row { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; }
 .todo-row:hover { background: var(--surface-2); }
+/* 行尾操作区：桌面端与文本同排、紧跟右侧（视觉同重构前）；手机端换行规则见移动端媒体查询 */
+.row-acts { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
 
 /* ---- 拖拽改期 ---- */
 .todo-row[draggable="true"] { cursor: grab; }
@@ -756,9 +780,12 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 .tag.green { background: #e7f6ee; color: #2a8f5e; }
 .completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
 
-.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+/* 7 列等宽。必须写成 minmax(0, 1fr)：1fr 的最小值默认是 auto（= 内容最小宽），
+   而格子里的待办文字是 nowrap，窄屏下会被内容撑开导致整个日历横向溢出（实测手机端只露出 3 列）。
+   minmax(0, ...) 让列宽完全由容器决定，文字改用省略号截断。 */
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
 .cal-wd { text-align: center; font-size: 12px; color: var(--text-3); padding: 4px 0; }
-.cal-day { border: 1px solid var(--border); border-radius: 10px; min-height: 76px; padding: 5px; background: var(--surface); }
+.cal-day { border: 1px solid var(--border); border-radius: 10px; min-height: 76px; padding: 5px; background: var(--surface); min-width: 0; }
 .cal-day.out-month { opacity: .35; }
 .cal-num { font-size: 12px; font-weight: 600; margin-bottom: 3px; }
 .cal-todo {
@@ -778,4 +805,38 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 
 .preview-box { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-top: 4px; }
 .big-opt { flex-direction: column; gap: 4px; padding: 18px 12px; height: auto; }
+
+/* ===================== 移动端（≤ 820px） ===================== */
+@media (max-width: 820px) {
+  /* 列表/日历切换与「添加待办」：整行铺满，按钮均分，触屏点击更稳 */
+  .seg { display: flex; width: 100%; }
+  .seg-btn { flex: 1; padding: 8px 0; font-size: 13.5px; }
+
+  /* 待办行：勾选框 + 内容独占首行，操作按钮整体落到第二行 */
+  .todo-row { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; padding: 10px 4px; }
+  .todo-row > .grow { flex: 1 1 calc(100% - 30px); } /* 100% - 勾选框(20) - 间距(10) */
+  .row-acts { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 6px; row-gap: 8px; }
+  /* 相邻待办之间加分隔线：换行后单条变高，需要更明确的条目边界 */
+  .todo-block + .todo-block { border-top: 1px solid var(--border); }
+  .todo-row .icon-btn { width: 32px; height: 32px; min-width: 32px; font-size: 14px; }
+  .pomo-btn, .sub-btn { padding: 6px 11px; min-height: 32px; }
+  .pomo-cnt { font-size: 12px; }
+  /* 「升级」在手机上收进详情弹窗：多这一个图标会让纯待办行多折一行，
+     导致列表里各条高度不一致（详见 templates 里 #foot 的「升级」按钮） */
+  .act-upgrade { display: none; }
+
+  /* 日历：7 列在手机上每格仅约 45px，压缩留白和字号，保证「日期 + 待办」可辨认 */
+  .cal-grid { gap: 3px; }
+  .cal-day { min-height: 56px; padding: 3px; border-radius: 8px; }
+  .cal-num { font-size: 11px; margin-bottom: 2px; }
+  .cal-todo { font-size: 10px; padding: 1px 4px; border-radius: 4px; margin-bottom: 1px; }
+  .cal-more { font-size: 9.5px; padding: 0 2px; }
+
+  /* 拖拽改期在触屏上不可用（HTML5 拖放不响应触摸事件），隐藏底部放置区；
+     手机上改期统一走「⋯ 详情」里的日期字段 */
+  .drop-new { display: none; }
+  .wd-chip { width: 34px; height: 34px; font-size: 13px; }
+  .preview-box { padding: 10px; }
+  .big-opt { padding: 14px 10px; }
+}
 </style>

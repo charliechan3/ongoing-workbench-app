@@ -172,7 +172,7 @@ async function submit() {
   width: 100%; max-width: 780px; min-height: 480px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 22px; box-shadow: var(--shadow-lg);
-  display: grid; grid-template-columns: 1.05fr 1fr; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); overflow: hidden;
 }
 .brand-side {
   background: linear-gradient(150deg, #b48cff, #9b6dff 55%, #7d4ff0);
@@ -211,8 +211,44 @@ async function submit() {
 .guest-btn { width: 100%; justify-content: center; padding: 9px 0; font-size: 13.5px; color: var(--primary); border: 1px dashed var(--primary-border, rgba(155, 109, 255, .4)); border-radius: 10px; }
 .guest-tip { font-size: 11.5px; color: var(--text-3); text-align: center; line-height: 1.5; }
 
+/* ===================== 移动端（≤ 720px） ===================== */
 @media (max-width: 720px) {
-  .auth-card { grid-template-columns: 1fr; }
-  .brand-side { display: none; }
+  .auth-wrap {
+    padding: 16px 14px 22px;
+    gap: 14px;
+    /* 手机上内容可能高于一屏（横屏 / 小屏），允许滚动并把卡片居中，避免顶部被裁掉 */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .auth-card {
+    grid-template-columns: 1fr;
+    min-height: 0;
+    border-radius: 18px;
+    margin-block: auto;
+    flex-shrink: 0;
+  }
+  /* 品牌侧不整体隐藏，改为「紧凑头部」：保留 logo / 标题 / 副标题建立身份感，
+     只收起三条功能要点（它们在登录场景里信息价值低，却要占掉近半屏高度） */
+  .brand-side { padding: 22px 20px 18px; }
+  .auth-logo { width: 42px; height: 42px; border-radius: 12px; font-size: 21px; margin-bottom: 14px; }
+  .auth-title { font-size: 20px; }
+  .auth-sub { font-size: 12.5px; margin-top: 4px; }
+  .auth-points { display: none; }
+
+  .form-side { padding: 20px 20px 22px; }
+  .mode-btn { padding: 9px 0; }
+  .submit { padding: 12px 0; }
+  .guest-btn { padding: 11px 0; }
+  .auth-foot { padding: 0 4px; }
+}
+
+/* 小屏精修（≤ 430px）：进一步压缩品牌头部，让表单更早出现在首屏 */
+@media (max-width: 430px) {
+  .auth-wrap { padding: 12px 11px 18px; gap: 10px; }
+  .auth-card { border-radius: 16px; }
+  .brand-side { padding: 18px 16px 14px; }
+  .auth-logo { width: 38px; height: 38px; font-size: 19px; margin-bottom: 12px; }
+  .auth-title { font-size: 18px; }
+  .form-side { padding: 18px 16px 20px; }
 }
 </style>

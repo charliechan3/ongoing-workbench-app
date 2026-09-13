@@ -167,4 +167,20 @@ async function setStatus(m, s) {
 .new-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 200px; border-style: dashed; cursor: pointer; color: var(--text-3); transition: all .15s; }
 .new-card:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .new-plus { font-size: 26px; font-weight: 300; }
+
+/* ===================== 移动端（≤ 820px） ===================== */
+@media (max-width: 820px) {
+  /* 统计卡：两列铺满，图标略收 */
+  .stat-card { gap: 10px; padding: 13px 12px; }
+  .stat-ico { width: 34px; height: 34px; border-radius: 10px; font-size: 16px; }
+  .stat-num { font-size: 19px; }
+
+  /* 类型筛选 chip：加大点击热区，横向铺满时更整齐 */
+  .chip { padding: 8px 14px; font-size: 13px; }
+
+  /* 状态小按钮（想/在看/完成/暂停/放弃）：触屏上加高，避免误触相邻项 */
+  .mini-btn { padding: 6px 12px; font-size: 12px; min-height: 32px; }
+
+  .new-card { min-height: 116px; }
+}
 </style>

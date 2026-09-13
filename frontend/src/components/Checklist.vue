@@ -95,7 +95,8 @@ function onDragEnd() { dragId.value = ''; overId.value = '' }
          draggable="true" title="拖动可调整顺序"
          @dragstart="onDragStart(it, $event)" @dragover="onDragOver(it, $event)"
          @drop="onDrop(it, $event)" @dragend="onDragEnd">
-      <span class="cl-grip">⋮⋮</span>
+      <span class="cl-grip" title="拖动可调整顺序；点按可改名"
+            @click="startRename(it.id, it.name)">⋮⋮</span>
       <div class="checkbox cl-box" :class="{ on: it.done }" :title="it.done ? '取消完成' : '标记完成'"
            @click="store.toggleChecklist(it)">✓</div>
       <input v-if="renamingId === it.id" :ref="renameRef" v-model="renameText" class="rename-input"
@@ -135,4 +136,23 @@ function onDragEnd() { dragId.value = ''; overId.value = '' }
 .cl-addbtn:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
 .cl-add { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .cl-input { padding: 5px 9px; font-size: 13px; }
+
+/* ===================== 移动端（≤ 820px） ===================== */
+@media (max-width: 820px) {
+  /* 缩进减小：手机上列表整体左移，给子项内容腾出宽度 */
+  .clist { margin-left: 10px; padding-left: 7px; }
+  .cl-row { padding: 7px 6px; gap: 9px; }
+  /* 勾选框加大（全局 .checkbox 的移动端尺寸会被本组件的 .cl-box 覆盖，需在此同步） */
+  .cl-box { width: 19px; height: 19px; border-radius: 5px; font-size: 11px; }
+  .cl-name { font-size: 14px; }
+  .cl-grip { font-size: 13px; padding: 0 3px; }
+  .cl-addbtn { padding: 8px 12px; font-size: 13px; }
+  .cl-input { font-size: 16px; } /* 与其它输入框一致，规避 iOS 聚焦缩放 */
+  .cl-add .btn { min-height: 36px; }
+}
+
+/* 触屏：没有 hover，删除按钮直接常显（原为 hover 才提亮） */
+@media (hover: none) {
+  .cl-del { opacity: .7; }
+}
 </style>

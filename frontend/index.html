@@ -2,7 +2,17 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover：允许铺满全面屏/刘海的可用区域，安全区由 CSS 的 env(safe-area-inset-*) 处理
+       interactive-widget=resizes-content：软键盘弹出时压缩布局视口（而非浮在内容之上），
+       这样底部抽屉里的输入框不会被键盘挡住（Chrome/Android 支持；iOS 由浏览器自身滚动处理） -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+  <!-- 移动端浏览器地址栏配色：与页面顶栏（--surface）一致，减少割裂感 -->
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="进行时" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>个人工作台</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%239b6dff'/><text x='50' y='64' font-size='36' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'>ing</text></svg>" />
 </head>

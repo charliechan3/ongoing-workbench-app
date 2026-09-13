@@ -143,7 +143,7 @@ async function savePref() {
 
     <!-- ===== 备份 ===== -->
     <template v-if="tab === 'backup'">
-      <div class="grid-2" style="grid-template-columns:repeat(auto-fill, minmax(380px, 1fr))">
+      <div class="grid-2" style="grid-template-columns:repeat(auto-fill, minmax(min(380px, 100%), 1fr))">
         <div class="card" style="display:flex;flex-direction:column">
           <h3 style="font-size:15px;margin-bottom:6px">导出备份</h3>
           <p class="muted mb-16">导出全部数据为 JSON 文件，或导出 Markdown 阅读版，方便随时查阅和留存。</p>
@@ -214,7 +214,7 @@ async function savePref() {
 
     <!-- ===== 账号 ===== -->
     <template v-else>
-      <div class="grid-2" style="grid-template-columns:repeat(auto-fill, minmax(360px, 1fr))">
+      <div class="grid-2" style="grid-template-columns:repeat(auto-fill, minmax(min(360px, 100%), 1fr))">
         <div class="card">
           <h3 style="font-size:15px;margin-bottom:6px">账号信息</h3>
           <p class="muted mb-16">用户名用于登录，创建后不可修改；昵称显示在工作台左下角。</p>
@@ -311,4 +311,22 @@ async function savePref() {
 .pv-num { font-size: 22px; font-weight: 700; }
 .warn-box { background: #fef5e7; border: 1px solid #f5d9a8; border-radius: 10px; padding: 12px 14px; margin-top: 10px; font-size: 13px; }
 .ok-box { background: #e7f6ee; border: 1px solid #b8e3cd; border-radius: 10px; padding: 12px 14px; margin-top: 10px; font-size: 13px; color: #2a8f5e; }
+
+/* ===================== 移动端（≤ 820px） ===================== */
+@media (max-width: 820px) {
+  /* 三个分区标签铺满整行并均分，避免「备份与恢复 / 账号与安全」被挤到换行 */
+  .seg { display: flex; width: 100%; }
+  .seg-btn { flex: 1; padding: 9px 0; font-size: 13px; }
+
+  .pref-row { padding: 12px 0; gap: 10px; }
+  .pref-row > div { flex: 1; min-width: 0; }
+
+  /* 开关加大到手指可点尺寸（原 38×21 在触屏上偏小） */
+  .switch { width: 46px; height: 26px; }
+  .switch::after { width: 22px; height: 22px; }
+  .switch:checked::after { left: 22px; }
+
+  .pv-num { font-size: 19px; }
+  .pv-card { padding: 10px 8px; }
+}
 </style>
