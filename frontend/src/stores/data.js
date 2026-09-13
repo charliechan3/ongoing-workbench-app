@@ -670,7 +670,7 @@ export const useDataStore = defineStore('data', {
         await this.update('actions', act.id, { status: toDone ? 'done' : 'todo', doneDates: dd }, { silent: true })
       }
       if (toDone && this.settings.autoPomoOnTodo) {
-        await this.create('pomodoros', { date: today(), minutes: this.pomoMinutes, todoId: todo.id, actionId: todo.actionId || null, text: todo.text, type: 'todo' }, { silent: true })
+        await this.create('pomodoros', { date: today(), minutes: this.pomoMinutes, targetType: 'todo', targetId: todo.id, title: todo.text }, { silent: true })
         const tp = { pomoCount: (todo.pomoCount || 0) + 1 }
         if (act) tp.pomoCount = Math.max((act.pomoCount || 0) + 1, tp.pomoCount)
         await this.update('todos', todo.id, { pomoCount: tp.pomoCount }, { silent: true })
@@ -746,7 +746,7 @@ export const useDataStore = defineStore('data', {
         await this.update('todos', todo.id, { status: nxt.status, doneDate: nxt.status === 'done' ? today() : null }, { silent: true })
       }
       if (!done && this.settings.autoPomoOnAction && act.pomoCount == null) {
-        await this.create('pomodoros', { date: today(), minutes: this.pomoMinutes, actionId: act.id, text: act.name, type: 'action' }, { silent: true })
+        await this.create('pomodoros', { date: today(), minutes: this.pomoMinutes, targetType: 'action', targetId: act.id, title: act.name }, { silent: true })
       }
     },
 
@@ -776,6 +776,8 @@ export const useDataStore = defineStore('data', {
     // 结束当前番茄钟会话（到点或手动）：记录 + 若绑定待办则同步累计，并清理持久化。
     // 统一入口 —— 首页 / 待办页 / 刷新后补记都走这里，保证记录口径一致
     // （待办被删时降级为自由专注，而不是整颗丢弃）。
+    // 落库字段用后端的契约：targetType/targetId = 绑定目标，title = 任务名快照
+    // （曾用 text/todoId/actionId，后端实体没这些字段会被静默丢弃，导致统计页认不出任务）
     async finishPomoSession() {
       const s = this.pomoSession
       if (!s.endAt) return
@@ -785,8 +787,8 @@ export const useDataStore = defineStore('data', {
       let ref = {}
       if (todoId) {
         const t = this.todos.find(x => x.id === todoId)
-        if (t) ref = { todoId, actionId: t.actionId || null, text: t.text, type: 'todo' }
-        else todoId = '' // 待办在专注期间被删 → 降级为自由专注，不写悬空 todoId
+        if (t) ref = { targetType: 'todo', targetId: todoId, title: t.text }
+        else todoId = '' // 待办在专注期间被删 → 降级为自由专注，不写悬空绑定
       }
       await this.finishPomodoro(minutes, ref)
       this.toast(todoId ? `完成 1 个番茄钟（${minutes} 分钟），已计入所选待办 🍅` : `完成 1 个番茄钟（${minutes} 分钟），已记录 🍅`)
@@ -809,10 +811,12 @@ export const useDataStore = defineStore('data', {
     },
 
     // 完成番茄钟 → 记录 + 若绑定待办/行动则同步累计 pomoCount
+    // ref 由调用方给：{ targetType, targetId, title }（targetId 为待办 id 时才回写 pomoCount）
     async finishPomodoro(minutes = 25, ref = {}) {
       const p = await this.create('pomodoros', { date: today(), minutes, ...ref }, { silent: true })
-      if (ref.todoId) {
-        const td = this.todos.find(x => x.id === ref.todoId)
+      const bindTodoId = ref.targetId && ref.targetType !== 'action' ? ref.targetId : ''
+      if (bindTodoId) {
+        const td = this.todos.find(x => x.id === bindTodoId)
         if (td) {
           await this.update('todos', td.id, { pomoCount: (td.pomoCount || 0) + 1 }, { silent: true })
           if (td.actionId) {

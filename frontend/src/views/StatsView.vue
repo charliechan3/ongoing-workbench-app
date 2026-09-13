@@ -126,14 +126,22 @@ const metrics = computed(() => {
   return { totalTodos, totalActions, totalPomos, totalMinutes, goal, planned, actual, deviation, streak, totalPomoAll, totalMinutesAll }
 })
 
-/* 近 7 日番茄按任务占比（分组依据：番茄记录自带的任务名 text，未绑定的归为「自由专注」） */
+/* 近 7 日番茄按任务占比（分组依据：番茄记录绑定的目标 targetId，展示名取当前待办/行动名，
+   目标已被删除时回落到记录里的 title 快照；真正没绑定目标的才归为「自由专注」） */
 const pomoPalette = ['#9b6dff', '#6cc7a5', '#f5a35c', '#5aa9e6', '#f26d76', '#c9a227', '#8a8fa3']
 const pomoTaskDist = computed(() => {
   const week = days7.value.map(d => d.f)
   const list = store.pomodoros.filter(p => week.includes(p.date))
+  const nameOf = (p) => {
+    if (p.targetId) {
+      const hit = store.todos.find(t => t.id === p.targetId) || store.actions.find(a => a.id === p.targetId)
+      if (hit) return (hit.text || hit.name || '').trim() || '未命名'
+    }
+    return (p.title || '').trim() || '自由专注'
+  }
   const map = {}
   for (const p of list) {
-    const name = (p.text || '').trim() || '自由专注'
+    const name = nameOf(p)
     map[name] = (map[name] || 0) + 1
   }
   const items = Object.entries(map).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
