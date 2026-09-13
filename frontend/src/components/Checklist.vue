@@ -138,15 +138,17 @@ function onDragEnd() { dragId.value = ''; overId.value = '' }
 .cl-input { padding: 5px 9px; font-size: 13px; }
 
 /* ===================== 移动端（≤ 820px） ===================== */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
   /* 缩进减小：手机上列表整体左移，给子项内容腾出宽度 */
   .clist { margin-left: 10px; padding-left: 7px; }
-  .cl-row { padding: 7px 6px; gap: 9px; }
-  /* 勾选框加大（全局 .checkbox 的移动端尺寸会被本组件的 .cl-box 覆盖，需在此同步） */
-  .cl-box { width: 19px; height: 19px; border-radius: 5px; font-size: 11px; }
+  .cl-row { padding: 8px 6px; gap: 9px; }
+  /* 勾选框加大（全局 .checkbox 的移动端尺寸会被本组件的 .cl-box 覆盖，需在此同步；
+     命中区由全局 .checkbox::after 扩展，无需重复） */
+  .cl-box { width: 21px; height: 21px; border-radius: 5px; font-size: 11px; }
   .cl-name { font-size: 14px; }
-  .cl-grip { font-size: 13px; padding: 0 3px; }
-  .cl-addbtn { padding: 8px 12px; font-size: 13px; }
+  .cl-grip { font-size: 14px; padding: 0 5px; }
+  .cl-del { width: 30px; height: 30px; font-size: 14px; }
+  .cl-addbtn { padding: 9px 13px; font-size: 13px; }
   .cl-input { font-size: 16px; } /* 与其它输入框一致，规避 iOS 聚焦缩放 */
   .cl-add .btn { min-height: 36px; }
 }

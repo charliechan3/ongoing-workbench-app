@@ -262,9 +262,9 @@ function onLogout() {
 .mob-sub { font-size: 11px; color: var(--text-3); line-height: 1.3; }
 .mob-user {
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
-  max-width: 42%;
+  max-width: 42%; min-height: 38px;
   border: 1px solid var(--border); background: var(--surface);
-  border-radius: 999px; padding: 3px 10px 3px 4px;
+  border-radius: 999px; padding: 3px 12px 3px 4px;
   cursor: pointer; font-family: inherit; color: var(--text);
 }
 .mob-user:active { background: var(--surface-2); }
@@ -276,9 +276,9 @@ function onLogout() {
 }
 .mob-user-name { font-size: 12px; font-weight: 600; }
 .mob-icon {
-  flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px;
+  flex-shrink: 0; width: 38px; height: 38px; border-radius: 11px;
   border: 1px solid var(--border); background: var(--surface);
-  color: var(--text-2); font-size: 17px; line-height: 1;
+  color: var(--text-2); font-size: 18px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; font-family: inherit;
 }
@@ -297,7 +297,7 @@ function onLogout() {
    且无需任何 JS 状态（不引入抽屉开关、返回键拦截等额外复杂度）。
    侧栏原有的品牌区与用户区在手机上隐藏，改由 .mob-bar 承担。
    ===================================================================== */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
   .sidebar {
     position: fixed;
     left: 0; right: 0; bottom: 0; top: auto;
@@ -352,10 +352,27 @@ function onLogout() {
 /* 小屏精修：顶栏收紧，用户区只留头像 */
 @media (max-width: 430px) {
   .mob-bar { padding: 7px 11px; }
-  .mob-user { padding: 3px; gap: 0; }
+  .mob-user { padding: 3px 9px 3px 4px; gap: 0; min-width: 40px; }
   .mob-user-name { display: none; }
   .mob-user { max-width: none; }
   .nav-item { font-size: 10px; }
   .nav-ico { font-size: 17px; }
+}
+
+/* 手机横屏（粗指针 + 矮视口）：顶栏与底部标签栏压薄，把竖向空间让给内容。
+   这些元素都在本组件内、带 scoped 属性选择器，全局样式覆盖不到，故写在组件里。 */
+@media (pointer: coarse) and (max-height: 480px) {
+  .mob-bar { padding: 5px 14px; }
+  .mob-logo { width: 26px; height: 26px; border-radius: 8px; font-size: 13px; }
+  .mob-title { font-size: 12.5px; }
+  .mob-sub { display: none; }          /* 日期在横屏次要，省一行高度 */
+  .mob-icon { width: 38px; height: 38px; }
+  .mob-user { padding: 3px 10px 3px 4px; }
+  .sidebar { padding: 4px 10px calc(4px + env(safe-area-inset-bottom, 0px)); }
+  .nav { max-width: 720px; }
+  .nav-item { padding: 4px 2px; gap: 1px; }
+  .nav-ico { font-size: 17px; }
+  .guest-banner { margin: 6px 14px 0; }
+  .cmd-list { max-height: 56dvh; }
 }
 </style>

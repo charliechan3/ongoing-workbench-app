@@ -456,33 +456,6 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
   .charts-grid { grid-template-columns: minmax(0, 1fr); } /* 手机每行一图 */
 }
 
-/* ===================== 移动端（≤ 820px） ===================== */
-@media (max-width: 820px) {
-  /* 工时热力图：365 天 = 53 列，手机上等比压缩后每格只剩 5px 左右，看不清也点不准。
-     改为固定格子宽度 + 容器横向滚动（与 GitHub 移动端一致），纵向刻度保持不变避免错位。 */
-  .heat-wrap {
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 8px;
-    -webkit-overflow-scrolling: touch;
-  }
-  .heat-body { min-width: 560px; }
-
-  /* 图例名称改为占满剩余宽度（原先固定 max-width:260px 会与右侧数量一起把行挤爆） */
-  .lg-name { flex: 1; min-width: 0; max-width: none; }
-
-  .dist-name { width: 82px; }
-  .m-num { font-size: 23px; }
-  .metric { padding: 13px 14px; }
-  .bar-chart { height: 150px; }
-  .trend-wrap, .trend-bars { height: 158px; }
-  .pie { width: 112px; height: 112px; }
-  .pie-hole { inset: 24px; }
-  /* 热力图区间切换按钮加高，方便触摸 */
-  .heat-tabs button { padding: 7px 12px; }
-  .ds-item { padding: 3px 9px; }
-}
-
 .pie-wrap { flex: 1; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .pie { width: 132px; height: 132px; border-radius: 50%; position: relative; flex: none; }
 .pie-hole { position: absolute; inset: 28px; background: var(--surface, #fff); border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
@@ -515,4 +488,39 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
 .heat-cell.h4 { background: #2f9f6d; }
 .heat-cell.out { background: transparent; cursor: default; }
 .heat-cell:not(.out) { cursor: default; }
+
+/* =====================================================================
+   移动端（≤ 820px / 手机横屏）
+   ---------------------------------------------------------------------
+   注意：这一段必须放在文件末尾。此前的规则写在 .heat-wrap / .heat-body /
+   .heat-tabs button 等基础样式之前，同为「类 + 元素」选择器、权重相同，
+   后者按源顺序反超，导致 .heat-body 的 min-width:560px 被覆盖成 0——
+   365 天热力图的横向滚动修复其实从未生效（格子被压到 5px 宽），
+   热力图区间按钮的加高也被吃掉。放在末尾才能稳定生效。
+   ===================================================================== */
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
+  /* 工时热力图：365 天 = 53 列，手机上等比压缩后每格只剩 5px 左右，看不清也点不准。
+     改为固定格子宽度 + 容器横向滚动（与 GitHub 移动端一致），纵向刻度保持不变避免错位。 */
+  .heat-wrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .heat-body { min-width: 560px; }
+
+  /* 图例名称改为占满剩余宽度（原先固定 max-width:260px 会与右侧数量一起把行挤爆） */
+  .lg-name { flex: 1; min-width: 0; max-width: none; }
+
+  .dist-name { width: 82px; }
+  .m-num { font-size: 23px; }
+  .metric { padding: 13px 14px; }
+  .bar-chart { height: 150px; }
+  .trend-wrap, .trend-bars { height: 158px; }
+  .pie { width: 112px; height: 112px; }
+  .pie-hole { inset: 24px; }
+  /* 热力图区间切换按钮加高到 36px 以上，方便触摸 */
+  .heat-tabs button { padding: 10px 14px; font-size: 12.5px; }
+  .ds-item { padding: 3px 9px; }
+}
 </style>

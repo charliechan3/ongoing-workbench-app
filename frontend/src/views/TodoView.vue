@@ -234,6 +234,20 @@ const toggleDayExpand = (f) => {
 }
 const calShown = (d) => isDayExpanded(d.f) ? d.todos : d.todos.slice(0, 3)
 
+/* ---- 手机端日历：格子里的文字注定只能显示 2 个字（7 列 × 390px ≈ 45px/格），
+   改为「日期 + 圆点」表示有无待办，选中某天后在网格下方给出完整清单。
+   两者都由媒体查询控制显隐，桌面端的文字条目与拖拽行为完全不变。 ---- */
+const calSel = ref(today())
+const selectCalDay = (d) => { calSel.value = calSel.value === d.f ? '' : d.f }
+const calSelDay = computed(() => calDays.value.find(d => d.f === calSel.value) || null)
+const calSelTodos = computed(() => calSelDay.value ? calSelDay.value.todos : [])
+const calSelLabel = computed(() => {
+  if (!calSel.value) return ''
+  const [y, m, d] = calSel.value.split('-')
+  const wd = ['日', '一', '二', '三', '四', '五', '六'][new Date(+y, +m - 1, +d).getDay()]
+  return `${+m}月${+d}日 周${wd}`
+})
+
 // 点击日历格：普通 todo 翻转状态；重复实例只切换当天（未来日期禁止提前完成）
 function clickCalCell(c) {
   if (c.repeat) {
@@ -624,24 +638,50 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
     <template v-else>
       <div class="card">
         <div class="flex-between mb-12">
-          <button class="btn ghost sm" @click="calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1)">‹</button>
+          <button class="btn ghost sm cal-nav" @click="calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1)">‹</button>
           <span style="font-weight:600">{{ calTitle }}</span>
-          <button class="btn ghost sm" @click="calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1)">›</button>
+          <button class="btn ghost sm cal-nav" @click="calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1)">›</button>
         </div>
         <div class="cal-grid">
           <div v-for="w in ['日','一','二','三','四','五','六']" :key="w" class="cal-wd">{{ w }}</div>
           <div v-for="d in calDays" :key="d.f" class="cal-day"
-               :class="{ 'out-month': !d.inMonth, today: d.f === today(), 'drop-target': hoverDay === d.f }"
-               @dragover.prevent="hoverDay = d.f" @dragleave="hoverDay === d.f && (hoverDay = '')" @drop.prevent="dropOnDay(d, $event)">
+               :class="{ 'out-month': !d.inMonth, today: d.f === today(), 'sel-day': d.f === calSel, 'drop-target': hoverDay === d.f }"
+               @dragover.prevent="hoverDay = d.f" @dragleave="hoverDay === d.f && (hoverDay = '')" @drop.prevent="dropOnDay(d, $event)"
+               @click="selectCalDay(d)">
             <div class="cal-num">{{ d.day }}</div>
+            <!-- 手机：圆点概览（最多 3 个 + 溢出计数）。文字条目在 45px 宽的格子里只能
+                 露出两个字，所以窄屏改成「点格子 → 看网格下方的完整清单」 -->
+            <div class="cal-dots">
+              <i v-for="(c, i) in d.todos.slice(0, 3)" :key="i" :class="{ done: c.done }"></i>
+              <span v-if="d.todos.length > 3" class="cal-dots-more">+{{ d.todos.length - 3 }}</span>
+            </div>
+            <!-- 桌面：文字条目（可拖拽改期 / 点击切换完成），窄屏整块隐藏 -->
+            <div class="cal-items">
             <div v-for="c in calShown(d)" :key="c.f + '-' + c.todo.id" class="cal-todo"
                  :class="{ done: c.done, dragging: drag && drag.id === c.todo.id }"
                  :draggable="!c.repeat"
                  :title="(c.repeat ? '重复行动（按规则出现，不可拖拽）。' + (c.done ? '已完成（' + c.f + '），点击取消' : '未完成，点击完成当天') + (c.f > today() ? '（未来日期不可提前完成）' : '') : c.todo.text + (c.todo.completionNote ? '\n完成情况：' + c.todo.completionNote : '') + '（可拖拽到其他日期）')"
                  @dragstart="!c.repeat && dragStart(c.todo, $event)" @dragend="dragEnd"
-                 @click="clickCalCell(c)">{{ c.repeat ? '↻ ' : '' }}{{ c.todo.text }}</div>
-            <div v-if="d.todos.length > 3" class="cal-more" @click.stop="toggleDayExpand(d.f)"
-                 :title="isDayExpanded(d.f) ? '收起' : '展开全部'">{{ isDayExpanded(d.f) ? '▲ 收起' : `+${d.todos.length - 3} 更多 ▾` }}</div>
+                 @click.stop="clickCalCell(c)">{{ c.repeat ? '↻ ' : '' }}{{ c.todo.text }}</div>
+              <div v-if="d.todos.length > 3" class="cal-more" @click.stop="toggleDayExpand(d.f)"
+                   :title="isDayExpanded(d.f) ? '收起' : '展开全部'">{{ isDayExpanded(d.f) ? '▲ 收起' : `+${d.todos.length - 3} 更多 ▾` }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 手机：选中日的完整清单（桌面端由媒体查询隐藏）。
+             点条目即切换完成状态，与格子里点击文字条目是同一个动作。 -->
+        <div v-if="calSelDay" class="cal-agenda">
+          <div class="cal-agenda-head">
+            <span class="cal-agenda-date">{{ calSelLabel }}</span>
+            <span class="muted">{{ calSelTodos.filter(c => c.done).length }}/{{ calSelTodos.length }}</span>
+          </div>
+          <div v-if="!calSelTodos.length" class="cal-agenda-empty muted">这天没有待办</div>
+          <div v-for="c in calSelTodos" :key="c.f + '-' + c.todo.id" class="cal-agenda-row" :class="{ done: c.done }"
+               @click="clickCalCell(c)">
+            <span class="checkbox" :class="{ on: c.done }">✓</span>
+            <span class="grow truncate">{{ c.repeat ? '↻ ' : '' }}{{ c.todo.text }}</span>
+            <span class="tag" :class="priCls(c.todo.priority)">{{ c.todo.priority }}</span>
           </div>
         </div>
       </div>
@@ -800,6 +840,9 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 }
 .cal-more:hover { color: var(--primary); background: var(--primary-soft); }
 
+/* 手机专用的圆点概览与选中日清单：桌面端不参与排版（窄屏规则见下方媒体查询） */
+.cal-dots, .cal-agenda { display: none; }
+
 .wd-chip { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); cursor: pointer; font-size: 12px; }
 .wd-chip.on { background: var(--primary); color: #fff; border-color: var(--primary); }
 
@@ -807,30 +850,48 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 .big-opt { flex-direction: column; gap: 4px; padding: 18px 12px; height: auto; }
 
 /* ===================== 移动端（≤ 820px） ===================== */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
   /* 列表/日历切换与「添加待办」：整行铺满，按钮均分，触屏点击更稳 */
   .seg { display: flex; width: 100%; }
-  .seg-btn { flex: 1; padding: 8px 0; font-size: 13.5px; }
+  .seg-btn { flex: 1; padding: 10px 0; font-size: 13.5px; }
 
   /* 待办行：勾选框 + 内容独占首行，操作按钮整体落到第二行 */
   .todo-row { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; padding: 10px 4px; }
-  .todo-row > .grow { flex: 1 1 calc(100% - 30px); } /* 100% - 勾选框(20) - 间距(10) */
+  .todo-row > .grow { flex: 1 1 calc(100% - 32px); } /* 100% - 勾选框(22) - 间距(10) */
   .row-acts { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 6px; row-gap: 8px; }
   /* 相邻待办之间加分隔线：换行后单条变高，需要更明确的条目边界 */
   .todo-block + .todo-block { border-top: 1px solid var(--border); }
-  .todo-row .icon-btn { width: 32px; height: 32px; min-width: 32px; font-size: 14px; }
-  .pomo-btn, .sub-btn { padding: 6px 11px; min-height: 32px; }
+  .todo-row .icon-btn { width: 36px; height: 36px; min-width: 36px; font-size: 15px; }
+  .pomo-btn, .sub-btn { padding: 7px 12px; min-height: 36px; }
   .pomo-cnt { font-size: 12px; }
   /* 「升级」在手机上收进详情弹窗：多这一个图标会让纯待办行多折一行，
      导致列表里各条高度不一致（详见 templates 里 #foot 的「升级」按钮） */
   .act-upgrade { display: none; }
 
-  /* 日历：7 列在手机上每格仅约 45px，压缩留白和字号，保证「日期 + 待办」可辨认 */
-  .cal-grid { gap: 3px; }
-  .cal-day { min-height: 56px; padding: 3px; border-radius: 8px; }
-  .cal-num { font-size: 11px; margin-bottom: 2px; }
-  .cal-todo { font-size: 10px; padding: 1px 4px; border-radius: 4px; margin-bottom: 1px; }
-  .cal-more { font-size: 9.5px; padding: 0 2px; }
+  /* 日历（手机）：7 列 × 390px ≈ 45px/格，塞文字只能露出两个字，认不出来也点不准。
+     格子只承载「日期 + 圆点」，完整清单下移到网格下方 .cal-agenda（44px 行高、可点）。
+     桌面端不受影响：.cal-items 照常显示，.cal-dots / .cal-agenda 保持 display:none。 */
+  .cal-grid { gap: 4px; }
+  .cal-day { min-height: 52px; padding: 5px 3px; border-radius: 9px; cursor: pointer; }
+  .cal-day.sel-day { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 2px var(--primary-soft) inset; }
+  .cal-wd { font-size: 11px; padding: 2px 0; }
+  .cal-num { font-size: 12px; margin-bottom: 5px; }
+  .cal-items { display: none; }
+  .cal-dots { display: flex; align-items: center; justify-content: center; gap: 3px; flex-wrap: wrap; min-height: 16px; }
+  .cal-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+  .cal-dots i.done { background: var(--border-strong); }
+  .cal-dots-more { font-size: 9.5px; color: var(--text-3); line-height: 1; }
+  /* 月份切换箭头：图标型按钮的横向热区也要够（原 30px 宽） */
+  .cal-nav { min-width: 44px; }
+
+  /* 选中日的完整清单 */
+  .cal-agenda { display: block; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
+  .cal-agenda-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 2px 8px; }
+  .cal-agenda-date { font-weight: 600; font-size: 13.5px; }
+  .cal-agenda-empty { padding: 14px 2px; font-size: 13px; }
+  .cal-agenda-row { display: flex; align-items: center; gap: 10px; padding: 10px 6px; min-height: 44px; border-radius: 9px; }
+  .cal-agenda-row + .cal-agenda-row { border-top: 1px solid var(--border); }
+  .cal-agenda-row.done .grow { color: var(--text-3); text-decoration: line-through; }
 
   /* 拖拽改期在触屏上不可用（HTML5 拖放不响应触摸事件），隐藏底部放置区；
      手机上改期统一走「⋯ 详情」里的日期字段 */

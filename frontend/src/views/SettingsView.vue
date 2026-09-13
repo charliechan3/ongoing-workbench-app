@@ -313,10 +313,10 @@ async function savePref() {
 .ok-box { background: #e7f6ee; border: 1px solid #b8e3cd; border-radius: 10px; padding: 12px 14px; margin-top: 10px; font-size: 13px; color: #2a8f5e; }
 
 /* ===================== 移动端（≤ 820px） ===================== */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
   /* 三个分区标签铺满整行并均分，避免「备份与恢复 / 账号与安全」被挤到换行 */
   .seg { display: flex; width: 100%; }
-  .seg-btn { flex: 1; padding: 9px 0; font-size: 13px; }
+  .seg-btn { flex: 1; padding: 10px 0; font-size: 13px; }
 
   .pref-row { padding: 12px 0; gap: 10px; }
   .pref-row > div { flex: 1; min-width: 0; }

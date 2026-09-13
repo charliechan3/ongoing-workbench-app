@@ -212,7 +212,7 @@ async function submit() {
 .guest-tip { font-size: 11.5px; color: var(--text-3); text-align: center; line-height: 1.5; }
 
 /* ===================== 移动端（≤ 720px） ===================== */
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 480px) {
   .auth-wrap {
     padding: 16px 14px 22px;
     gap: 14px;
@@ -236,9 +236,9 @@ async function submit() {
   .auth-points { display: none; }
 
   .form-side { padding: 20px 20px 22px; }
-  .mode-btn { padding: 9px 0; }
-  .submit { padding: 12px 0; }
-  .guest-btn { padding: 11px 0; }
+  .mode-btn { padding: 11px 0; }
+  .submit { padding: 13px 0; }
+  .guest-btn { padding: 13px 0; }
   .auth-foot { padding: 0 4px; }
 }
 

@@ -722,22 +722,22 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 .note-cat { width: 170px; flex-shrink: 0; }
 
 /* ===================== 移动端（≤ 820px） ===================== */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
   /* 项目/笔记切换与操作按钮：整行铺满，均分，触屏更好按 */
   .seg { display: flex; width: 100%; }
-  .seg-btn { flex: 1; padding: 8px 0; font-size: 13.5px; }
+  .seg-btn { flex: 1; padding: 10px 0; font-size: 13.5px; }
 
   /* 区域卡片：管理模式的四个小图标按钮加大热区 */
   .area-manage { gap: 4px; }
-  .area-manage .icon-btn { width: 34px; height: 34px; font-size: 15px; }
+  .area-manage .icon-btn { width: 38px; height: 38px; font-size: 16px; }
 
   /* 行动行：勾选框 + 行动名独占首行，操作按钮整体落到第二行 */
   .act-line { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; padding: 10px 4px 10px 8px; }
-  .act-line > .grow { flex: 1 1 calc(100% - 30px); } /* 100% - 勾选框(20) - 间距(10) */
+  .act-line > .grow { flex: 1 1 calc(100% - 32px); } /* 100% - 勾选框(22) - 间距(10) */
   .row-acts { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 6px; row-gap: 8px; }
   .act-block + .act-block { border-top: 1px solid var(--border); }
-  .act-line .icon-btn { width: 32px; height: 32px; min-width: 32px; font-size: 14px; }
-  .sub-btn { padding: 6px 11px; min-height: 32px; }
+  .act-line .icon-btn { width: 36px; height: 36px; min-width: 36px; font-size: 15px; }
+  .sub-btn { padding: 7px 12px; min-height: 36px; }
 
   /* 项目详情头部：标题块与操作按钮改为上下堆叠（按钮组自身靠 .flex 的换行继续折行） */
   .proj-head { flex-direction: column; align-items: stretch; gap: 12px; }
@@ -748,7 +748,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
   .note-cat { width: 100%; flex: 1 1 100%; }
   .preview-md { min-height: 160px; padding: 12px; }
 
-  .wd-chip { width: 34px; height: 34px; font-size: 13px; }
+  .wd-chip { width: 38px; height: 38px; font-size: 14px; }
   .new-card { min-height: 120px; }
   .add-area { min-height: 84px; }
 }

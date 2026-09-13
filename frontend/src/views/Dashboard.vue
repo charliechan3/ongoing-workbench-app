@@ -294,7 +294,7 @@ onBeforeUnmount(stopTick)
 .dash-cols { grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); align-items: start; }
 
 /* ===================== 移动端（≤ 820px） ===================== */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
   /* 单列纵向排布：统计卡 → 快速创建 → 项目进度 → 今日到期 → 番茄钟 → 今日待办 */
   .dash-cols { grid-template-columns: 1fr; }
 

@@ -330,6 +330,13 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
    · ≤ 820px —— 结构级切换。侧栏（232px 固定）改为底部标签栏，页面内边距、
      弹窗形态、栅格列数随之调整。取 820 而非 768，是为了让 iPad 竖屏
      （820pt）也能拿到单列布局，避免中文长标题被挤成两行。
+   · (pointer: coarse) and (max-height: 480px) —— 手机横屏（如 iPhone 14 的
+     844×390）。此时屏宽超过 820px，光看宽度会误判成桌面端：侧栏竖排后在
+     390px 高的视口里放不下（品牌区 + 6 个导航项 + 用户区合计约 395px），
+     底部用户区会被裁掉，且触屏上拿不到桌面端的 :hover 提示。故这里叠加
+     「粗指针 + 矮视口」条件，让横屏手机同样走移动端布局。
+     用 pointer: coarse 而不是单纯 max-height，是为了不误伤把桌面浏览器窗口
+     拉得很扁的情况（鼠标是 fine，不会命中）。
    · ≤ 430px —— 小屏精修（iPhone SE / 13 mini 一档），进一步压缩留白与字号。
    · (hover: none) —— 触屏专属：加大点击热区、放宽换行，桌面鼠标体验不受影响。
    设计原则：
@@ -339,7 +346,7 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
    4) 底部标签栏与安全区（刘海 / 手势条）用 env(safe-area-inset-*) 避让。
    ===================================================================== */
 
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) and (max-height: 480px) {
   /* ---- 主区域骨架 ---- */
   .main { padding-bottom: 0; }
   .main-inner {
@@ -358,14 +365,18 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
 
   /* ---- 通用元素：卡片、按钮、图标按钮 ---- */
   .card { padding: 16px 14px; border-radius: 13px; }
-  .btn { padding: 9px 14px; min-height: 38px; }
-  .btn.sm { padding: 7px 11px; min-height: 32px; }
-  .icon-btn { width: 34px; height: 34px; font-size: 15px; border-radius: 9px; }
+  /* 触屏热区统一抬到 36px 起：手指落点远比鼠标粗糙，
+     32px 以下的行内小按钮在手机上极易点空或误触相邻项 */
+  .btn { padding: 10px 15px; min-height: 40px; }
+  .btn.sm { padding: 8px 12px; min-height: 36px; }
+  .icon-btn { width: 38px; height: 38px; font-size: 16px; border-radius: 10px; }
   .tag { font-size: 11px; padding: 2px 8px; }
   .empty { padding: 34px 0; }
   .flex { flex-wrap: wrap; }
-  /* 勾选框加大到可点尺寸（20px），触屏上更好按 */
-  .checkbox { width: 20px; height: 20px; border-radius: 6px; font-size: 12px; }
+  /* 勾选框：视觉尺寸保持克制（22px），但用 ::after 把命中区扩到 36×36，
+     手指不用瞄准 —— 它是全应用点击最频繁的控件 */
+  .checkbox { width: 22px; height: 22px; border-radius: 6px; font-size: 12px; position: relative; }
+  .checkbox::after { content: ''; position: absolute; inset: -7px; }
 
   /* ---- 表单控件 ---- */
   /* iOS Safari 在输入框字号 < 16px 时会自动放大整个页面，这里统一抬到 16px 规避 */
@@ -429,11 +440,42 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
   .modal-foot { padding: 10px 14px calc(14px + env(safe-area-inset-bottom, 0px)); }
 }
 
+/* 手机横屏专修（粗指针 + 矮视口，如 844×390）：
+   屏宽够用但高度只有约 390px，纵向空间是最稀缺的资源，所以把移动端布局的
+   上下留白整体压薄；同时把「一律单列」的栅格放宽回多列——横屏宽度足够，
+   单列会把卡片拉成一整条长带，反而更难扫读。 */
+@media (pointer: coarse) and (max-height: 480px) {
+  .main-inner { padding: 12px 16px calc(70px + env(safe-area-inset-bottom, 0px)); }
+  .card { padding: 14px 16px; }
+  .page-head { margin-bottom: 12px; }
+  .page-title { font-size: 19px; }
+  .empty { padding: 26px 0; }
+
+  /* 弹窗改回居中卡片：矮视口下底部抽屉会把内容压到只剩一两行可见 */
+  .modal-mask { padding: 12px; align-items: center; }
+  .modal, .modal.wide {
+    width: min(520px, 92%);
+    max-width: 92%;
+    border-radius: 16px;
+    max-height: 88dvh;
+    animation: pop .18s ease;
+  }
+  .modal.wide { width: min(680px, 92%); }
+  .modal-foot .btn { flex: 0 1 auto; min-height: 36px; }
+
+  .toast-wrap { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+
+  /* 横屏宽度足够，恢复多列 */
+  .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 /* 触屏设备（手机 / 平板，无 hover 能力）：
    桌面端靠 :hover 提示才能发现的次要操作，在触屏上加大热区与常显对比度。
    注意：组件内 scoped 样式带属性选择器，优先级高于这里的全局选择器，
    需要覆盖按钮尺寸的规则写在对应组件的 scoped 样式里。 */
 @media (hover: none) {
-  .icon-btn { min-width: 34px; min-height: 34px; }
+  .icon-btn { min-width: 38px; min-height: 38px; }
 }
 
