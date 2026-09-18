@@ -388,13 +388,25 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
   label.field > span { font-size: 12px; }
 
   /* ---- 弹窗：手机上从底部抽屉式弹出，铺满宽度 ---- */
-  .modal-mask { padding: 0; align-items: flex-end; }
+  /* 遮罩按「当前真正可见的视口」摆放（--vv* 由 viewport.js 写）：
+     iOS Safari 弹出软键盘时只缩小 visual viewport、不动布局视口，
+     若仍用 inset:0 / 100dvh，固定定位的抽屉会留在原地被键盘盖住，
+     footer 里的「保存 / 取消」就点不到了 —— 贴着键盘上沿才是安全位置 */
+  .modal-mask {
+    padding: 0;
+    align-items: flex-end;
+    top: var(--vvt, 0px);
+    height: var(--vvh, 100dvh);
+    bottom: auto;
+  }
   .modal,
   .modal.wide {
     max-width: 100%;
     width: 100%;
     border-radius: 18px 18px 0 0;
-    max-height: 92dvh;
+    /* min(..., 100%)：可见区被键盘占掉一块后抽屉要一起缩，
+       否则内容会把 footer 顶出屏幕（露在键盘上方之外） */
+    max-height: min(92dvh, 100%);
     animation: sheetUp .22s cubic-bezier(.22, .8, .3, 1);
   }
   .modal-head { padding: 16px 16px 0; }
@@ -408,7 +420,8 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
   /* ---- Toast：移到屏幕下方、底部标签栏之上，避免遮挡顶栏内容 ---- */
   .toast-wrap {
     top: auto;
-    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+    /* + --vvb：软键盘顶起来时跟着上移，否则提示会藏在键盘后面 */
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px) + var(--vvb, 0px));
     left: 12px;
     right: 12px;
   }
@@ -451,13 +464,20 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
   .page-title { font-size: 19px; }
   .empty { padding: 26px 0; }
 
-  /* 弹窗改回居中卡片：矮视口下底部抽屉会把内容压到只剩一两行可见 */
-  .modal-mask { padding: 12px; align-items: center; }
+  /* 弹窗改回居中卡片：矮视口下底部抽屉会把内容压到只剩一两行可见
+     （同样要跟随可见视口 —— 横屏时软键盘几乎吃掉半屏，靠 dvh 避不开） */
+  .modal-mask {
+    padding: 12px;
+    align-items: center;
+    top: var(--vvt, 0px);
+    height: var(--vvh, 100dvh);
+    bottom: auto;
+  }
   .modal, .modal.wide {
     width: min(520px, 92%);
     max-width: 92%;
     border-radius: 16px;
-    max-height: 88dvh;
+    max-height: min(88dvh, 100%);
     animation: pop .18s ease;
   }
   .modal.wide { width: min(680px, 92%); }
