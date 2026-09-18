@@ -194,7 +194,12 @@ const heatMode = ref('365') // '365' = 最近365天 | 'year' = 当年
 
 const heatData = computed(() => {
   const now = new Date()
-  const end = new Date(now)
+  const today = fmtDate(now)
+  // 「当年」模式画满整年：即使还没到的日子也占位展示，热力图才是完整的 12 个月
+  // 「最近 365 天」是滚动区间，右端必然停在今天
+  const end = heatMode.value === 'year'
+    ? new Date(now.getFullYear(), 11, 31)
+    : new Date(now)
   const start = heatMode.value === 'year'
     ? new Date(now.getFullYear(), 0, 1)
     : new Date(now.getFullYear(), now.getMonth(), now.getDate() - 364)
@@ -216,6 +221,7 @@ const heatData = computed(() => {
   for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const f = fmtDate(d)
     const inRange = f >= rangeStart
+    const future = f > today // 今天之后：占位格，不算进任何汇总
     const minutes = byDay[f] || 0
     // 每月首个范围内的日子打上月份标签（供列头展示）
     let monthLabel = ''
@@ -224,8 +230,8 @@ const heatData = computed(() => {
       monthLabel = `${d.getMonth() + 1}月`
     }
     days.push({
-      f, minutes, inRange, monthLabel,
-      title: inRange ? `${f} · ${minutes ? (minutes / 60).toFixed(1) + ' 小时' : '无记录'}` : ''
+      f, minutes, inRange, future, monthLabel,
+      title: !inRange ? '' : future ? `${f} · 未到` : `${f} · ${minutes ? (minutes / 60).toFixed(1) + ' 小时' : '无记录'}`
     })
   }
   return days
@@ -387,7 +393,7 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
             <div v-for="(wk, wi) in heatWeeks" :key="'c' + wi" class="heat-col">
               <i
                 v-for="d in wk.days" :key="d.f"
-                :class="['heat-cell', 'h' + heatLevel(d.minutes, heatMax), { out: !d.inRange }]"
+                :class="['heat-cell', 'h' + heatLevel(d.minutes, heatMax), { out: !d.inRange, future: d.future }]"
                 :title="d.title"
               ></i>
             </div>
@@ -494,6 +500,8 @@ const heatWeekLabels = ['', '一', '', '三', '', '五', '']
 .heat-cell.h2 { background: #96dcbd; }
 .heat-cell.h3 { background: #55c39b; }
 .heat-cell.h4 { background: #2f9f6d; }
+/* 还没到的日子：占位展示，用虚线描边与「过去但当天没记录」的实心格子区分开 */
+.heat-cell.future { background: transparent; border: 1px dashed var(--border); }
 .heat-cell.out { background: transparent; cursor: default; }
 .heat-cell:not(.out) { cursor: default; }
 
