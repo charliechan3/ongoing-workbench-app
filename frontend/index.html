@@ -13,9 +13,13 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="进行时" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <!-- PWA：让手机可以「添加到主屏幕」后以独立应用形态打开（无地址栏、独立任务切换）。
-       display=standalone 由 manifest 声明；图标分两套——iOS 用 apple-touch-icon（会被系统自己裁圆角，
-       所以要满幅不透明的 PNG），Android 用 manifest 里的 maskable 图标。 -->
+  <!-- PWA：让手机、桌面都能「安装为应用」后以独立形态打开（无地址栏、独立任务切换）。
+       display=standalone 由 manifest 声明；图标按平台分两套——
+       iOS 用 apple-touch-icon，Android 用 manifest 里的 maskable：这两个平台会自己把图标裁成圆角/圆形，
+       所以源图必须满幅不透明，否则裁切前就带着一圈白底。
+       桌面端（Windows 快捷方式、任务栏）相反：它直接用 manifest 里 purpose=any 的 PNG 且不做任何裁切，
+       所以这两个必须是带透明通道的圆角图，否则 SVG 圆角外那片透明会被栅格化成白底，四个角发白。
+       改动图标时留神：从 icon.svg 导 PNG 要显式导出 RGBA，别用会填白底的导出方式。 -->
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
