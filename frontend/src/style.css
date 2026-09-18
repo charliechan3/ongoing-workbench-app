@@ -353,7 +353,10 @@ label.field > span { display: block; font-size: 12px; color: var(--text-2); marg
     padding: 16px 14px calc(88px + env(safe-area-inset-bottom, 0px));
     /* 内层滚动容器：阻止滚动到边界后继续带动页面（避免误触下拉刷新） */
     overscroll-behavior-y: contain;
-    -webkit-overflow-scrolling: touch;
+    /* 这里千万不要加 -webkit-overflow-scrolling: touch：
+       iOS Safari 会因此把该元素升级成独立图层，并把内部 position:fixed 后代的包含块
+       从视口换成这个滚动容器 —— 弹窗遮罩会跟着页面滚动偏移，底部按钮落到屏幕外。
+       （Safari 13 起 overflow 元素天生就有惯性滚动，这个属性早已是多余的。） */
   }
 
   /* ---- 页头：标题与操作区改为上下堆叠，操作区可换行 ---- */
