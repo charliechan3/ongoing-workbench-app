@@ -189,6 +189,13 @@ async function savePref() {
         </div>
         <div class="pref-row">
           <div>
+            <div style="font-weight:500">标签页显示番茄倒计时</div>
+            <div class="muted">专注期间把剩余时间显示在浏览器标签页标题上，切到别的标签也能一眼看到</div>
+          </div>
+          <input v-model="pref.showPomoInTitle" type="checkbox" class="switch" />
+        </div>
+        <div class="pref-row">
+          <div>
             <div style="font-weight:500">每日工时目标（分钟）</div>
             <div class="muted">用于统计页对比实际工时</div>
           </div>

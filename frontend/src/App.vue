@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDataStore } from './stores/data'
 import { useAuthStore } from './stores/auth'
@@ -48,6 +48,48 @@ const today = () => {
   const d = new Date()
   return `${d.getMonth() + 1}月${d.getDate()}日 ${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]}`
 }
+
+/* ===== 番茄倒计时写进浏览器标签页标题（偏好设置里可开关，默认关） =====
+   心跳放在根组件而不是各个视图里：用户在统计、设置等没有番茄 UI 的页面上，
+   也应该能看到剩余时间（这正是这个开关的意义）。
+   心跳只在「有会话进行中」时存在，空闲时不开定时器。
+   顺带补上原先的结算缺口：原来只有首页/待办页挂了到点结算的定时器，
+   停在别的视图时番茄到点不会入账，要切回首页才补记 —— 现在任意页面到点即结算。 */
+const BASE_TITLE = document.title || '个人工作台'
+let titleTick = null
+
+function stopTitleTick() {
+  if (titleTick) { clearInterval(titleTick); titleTick = null }
+}
+
+function tickTitle() {
+  const endAt = store.pomoSession.endAt
+  if (!endAt) return
+  if (Date.now() >= endAt) {
+    // 到点：走统一的会话收尾（记录 + 同步累计），结束会清掉 endAt，由下方 watch 复位标题
+    store.finishPomoSession().catch(() => {})
+    return
+  }
+  if (!store.settings?.showPomoInTitle) return
+  const left = Math.ceil((endAt - Date.now()) / 1000)
+  const mm = String(Math.floor(left / 60)).padStart(2, '0')
+  const ss = String(left % 60).padStart(2, '0')
+  document.title = `🍅 ${mm}:${ss} · ${BASE_TITLE}`
+}
+
+// 会话起止、开关切换都重挂心跳：先复位标题，再决定要不要重新写
+watch(
+  [() => store.pomoSession.endAt, () => store.settings?.showPomoInTitle],
+  ([endAt]) => {
+    stopTitleTick()
+    document.title = BASE_TITLE
+    if (!endAt) return
+    tickTitle()
+    titleTick = setInterval(tickTitle, 1000)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(stopTitleTick)
 
 // 全局快捷键：Ctrl/Cmd+K 打开搜索面板
 const onKey = (e) => {

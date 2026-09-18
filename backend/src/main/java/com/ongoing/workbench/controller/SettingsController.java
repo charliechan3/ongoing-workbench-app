@@ -40,6 +40,7 @@ public class SettingsController {
         if (s.getDailyGoalMinutes() == null || s.getDailyGoalMinutes() < 0) s.setDailyGoalMinutes(0);
         if (s.getAutoPomoOnTodo() == null) s.setAutoPomoOnTodo(false);
         if (s.getAutoPomoOnAction() == null) s.setAutoPomoOnAction(false);
+        if (s.getShowPomoInTitle() == null) s.setShowPomoInTitle(false);
         return s;
     }
 

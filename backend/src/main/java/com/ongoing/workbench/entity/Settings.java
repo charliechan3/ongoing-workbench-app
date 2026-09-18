@@ -19,4 +19,6 @@ public class Settings {
     private Boolean autoPomoOnTodo = false;
     /** 完成行动时自动沉淀 1 个番茄记录 */
     private Boolean autoPomoOnAction = false;
+    /** 番茄钟运行期间，把剩余时间显示在浏览器标签页标题上（默认关） */
+    private Boolean showPomoInTitle = false;
 }
