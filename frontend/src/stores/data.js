@@ -564,7 +564,14 @@ export const useDataStore = defineStore('data', {
         if ('pomoCount' in patch) tp.pomoCount = patch.pomoCount || 0
         if ('pomoEstimate' in patch) tp.pomoEstimate = patch.pomoEstimate || 0
         if ('priority' in patch) tp.priority = patch.priority
-        if ('startDate' in patch) { tp.startDate = patch.startDate || null; if (patch.startDate) tp.date = patch.startDate }
+        /* 日期是整段写穿的：action.startDate 就是待办的 date（列表锚点），
+           两边必须同进同退 —— 只搬非空值会让「行动日期清空了、待办还挂在旧日期分组」，
+           清空后待办应回到「未分配」（TodoView 按 !todo.date 归组）。 */
+        if ('startDate' in patch) {
+          const sd = patch.startDate || null
+          tp.startDate = sd
+          tp.date = sd
+        }
         if ('endDate' in patch) tp.endDate = patch.endDate || null
         // 重复行动的"完成"以每日实例(doneDates)表达，不允许整条置完成
         if ('status' in patch && !isRepeat(saved)) {

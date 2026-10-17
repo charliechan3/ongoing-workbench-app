@@ -177,6 +177,9 @@ async function saveAction() {
   if (f.repeat && !f.repeat.type) f.repeat = null
   // 重复 → 不重复：清掉重复规则留下的生效终止日（普通行动不设区间）
   if (!f.repeat && actionOrigRepeat.value) f.endDate = null
+  // 日期输入框清空后给的是空串：落库统一成 null，避免 '' 与 null 混着存（同步判断只认有值/无值）
+  if ('startDate' in f) f.startDate = f.startDate || null
+  if ('endDate' in f) f.endDate = f.endDate || null
   delete f.repeatDaysText
   if (f.id) await store.updateAction(f.id, f)
   else await store.addAction(f)
