@@ -11,6 +11,21 @@ const showModal = ref(false)
 const form = ref({})
 const editing = ref(null)
 
+/* 排序方式（2026-10-17）：默认仍是「最近添加」，其余三种由用户在下拉里选。
+   - created ：添加时间倒序（原有口径）
+   - start   ：开始日期倒序，近期开始的在前，没填日期的沉底
+   - status  ：按「在看 → 想看 → 暂停 → 放弃 → 完成」分组
+   - progress：进度高到低
+   三种新口径都带 createdAt 倒序兜底，同值条目顺序稳定，不会因为刷新乱跳 */
+const sortBy = ref('created')
+const STATUS_ORD = { doing: 0, wish: 1, paused: 2, quit: 3, done: 4 }
+const sortOptions = [
+  { v: 'created', l: '最近添加' },
+  { v: 'start', l: '开始时间' },
+  { v: 'status', l: '状态' },
+  { v: 'progress', l: '进度' }
+]
+
 const typeMeta = {
   book: { label: '图书', cls: 'blue', ico: '📖' },
   movie: { label: '电影', cls: 'red', ico: '🎬' },
@@ -20,7 +35,17 @@ const typeMeta = {
 }
 
 const list = computed(() => {
-  let l = [...store.medias].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+  const byNew = (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')
+  let l = [...store.medias]
+  if (sortBy.value === 'start') {
+    l.sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '') || byNew(a, b))
+  } else if (sortBy.value === 'status') {
+    l.sort((a, b) => (STATUS_ORD[a.status] ?? 9) - (STATUS_ORD[b.status] ?? 9) || byNew(a, b))
+  } else if (sortBy.value === 'progress') {
+    l.sort((a, b) => (b.progress || 0) - (a.progress || 0) || byNew(a, b))
+  } else {
+    l.sort(byNew)
+  }
   if (tab.value !== 'all') l = l.filter(m => m.type === tab.value)
   return l
 })
@@ -81,10 +106,18 @@ async function setStatus(m, s) {
       <div class="card stat-card"><div class="stat-ico" style="background:#f1ebff;color:#9b6dff">★</div><div><div class="stat-num">{{ stats.avgRating }}</div><div class="muted">平均评分</div></div></div>
     </div>
 
-    <!-- 类型切换 -->
-    <div class="flex gap-8 mb-16" style="flex-wrap:wrap">
-      <button class="chip" :class="{ on: tab === 'all' }" @click="tab = 'all'">全部</button>
-      <button v-for="(m, k) in typeMeta" :key="k" class="chip" :class="{ on: tab === k }" @click="tab = k">{{ m.ico }} {{ m.label }}</button>
+    <!-- 类型筛选 + 排序：左侧类型 chips，右侧排序下拉；窄屏时下拉换行独占一行 -->
+    <div class="filter-bar mb-16">
+      <div class="flex gap-8" style="flex-wrap:wrap">
+        <button class="chip" :class="{ on: tab === 'all' }" @click="tab = 'all'">全部</button>
+        <button v-for="(m, k) in typeMeta" :key="k" class="chip" :class="{ on: tab === k }" @click="tab = k">{{ m.ico }} {{ m.label }}</button>
+      </div>
+      <div class="sort-wrap">
+        <span class="sort-label">排序</span>
+        <select v-model="sortBy" class="select sort-select" aria-label="排序方式">
+          <option v-for="o in sortOptions" :key="o.v" :value="o.v">{{ o.l }}</option>
+        </select>
+      </div>
     </div>
 
     <!-- 列表 -->
@@ -158,6 +191,12 @@ async function setStatus(m, s) {
 .chip:hover { border-color: var(--primary-border); color: var(--primary); }
 .chip.on { background: var(--primary-soft); border-color: var(--primary-border); color: var(--primary); font-weight: 600; }
 
+/* 筛选行：chips 在左，排序下拉靠右；空间不够时下拉自动换行 */
+.filter-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sort-wrap { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.sort-label { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.sort-select { width: auto; min-width: 112px; padding-top: 6px; padding-bottom: 6px; border-radius: 999px; }
+
 .media-card { display: flex; flex-direction: column; transition: all .18s; }
 .media-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
 .star-line { color: var(--yellow); font-size: 12px; font-weight: 600; }
@@ -177,6 +216,10 @@ async function setStatus(m, s) {
 
   /* 类型筛选 chip：加大点击热区，横向铺满时更整齐 */
   .chip { padding: 10px 16px; font-size: 13px; }
+
+  /* 排序下拉：单独一行铺满，触屏更好点 */
+  .sort-wrap { width: 100%; margin-left: 0; }
+  .sort-select { flex: 1; min-width: 0; min-height: 40px; }
 
   /* 状态小按钮（想/在看/完成/暂停/放弃）：触屏上加高，避免误触相邻项 */
   .mini-btn { padding: 7px 13px; font-size: 12px; min-height: 36px; }
