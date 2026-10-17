@@ -25,7 +25,18 @@ spring:
       connection-timeout: 10000
       maximum-pool-size: 5
       minimum-idle: 1
+  # 固定方言：Hibernate 连不上库时会抛「Unable to determine Dialect without JDBC metadata」，
+  # 把真正的 JDBC / SSL 异常吞掉。显式指定方言后，Hibernate 不再依赖元数据推断，
+  # 真正的连接错误会原样打到日志里（定位 TLS / 网络问题必看）。
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
   # 云端不开放 H2 控制台（local 模式专属）
   h2:
     console:
       enabled: false
+
+logging:
+  level:
+    # 连接失败时这两处会打印原始异常（HHH000342 + Hikari 的 SQLException）
+    org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator: DEBUG
+    com.zaxxer.hikari: DEBUG

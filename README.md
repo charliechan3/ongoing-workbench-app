@@ -81,6 +81,7 @@ java -jar target/ongoing-workbench-1.0.0.jar --server.port=8080
 - 云库可以从空库起步，`ddl-auto: update` 会按实体自动建表；也可以先用设置页的备份导出 JSON → 在云库模式下恢复导入，实现本地数据上云。
 - **Supabase（PostgreSQL，当前选定方案）**：连接串用 Session pooler（`jdbc:postgresql://aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require`，直接连接是 IPv6-only），用户名带项目前缀 `postgres.<ref>`；驱动按 URL 自动推断，无需 CLOUD_DB_DRIVER。
 - **MySQL 兼容库**（TiDB Cloud 等）：驱动 `com.mysql.cj.jdbc.Driver`；若用其它数据库，用 `CLOUD_DB_DRIVER` 覆盖并确认 pom 里有对应驱动（已内置 mysql + postgresql 两个驱动）。
+- **连不上云库时**：加环境变量 `APP_DIAG_DB=true` 再启动，日志会打印 `[DB-DIAG]` 开头的逐段自检（域名解析 → 端口连通 → 服务端是否支持加密 → 加密握手 → 账号登录），一眼能看出卡在哪一步。部署在只给日志的平台上时尤其有用。排查完记得去掉。
 
 ## 核心交互
 
