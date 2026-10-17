@@ -21,8 +21,15 @@ spring:
     username: ${CLOUD_DB_USER:}
     password: ${CLOUD_DB_PASS:}
     hikari:
-      # 云库网络抖动时快速失败并复用连接池
-      connection-timeout: 10000
+      # 云库网络抖动时快速失败并复用连接池。
+      # 30s 而非默认 10s：免费版 Supabase 闲置会暂停、首次连接要唤醒，
+      # 跨境链路单次 TLS 握手实测就有 2s，10s 容易在冷启动时被吃满，
+      # 表现为 Hibernate 拿不到连接、只报「无法推断数据库类型」。
+      connection-timeout: 30000
+      # 建池时允许等待首个连接就绪（冷启动），超过后启动失败
+      initialization-fail-timeout: 30000
+      # 定期探活，避免连接被 Supavisor 静默断开后仍留在池里
+      keepalive-time: 60000
       maximum-pool-size: 5
       minimum-idle: 1
   # 固定方言：Hibernate 连不上库时会抛「Unable to determine Dialect without JDBC metadata」，
@@ -37,6 +44,6 @@ spring:
 
 logging:
   level:
-    # 连接失败时这两处会打印原始异常（HHH000342 + Hikari 的 SQLException）
+    # 连接失败时这里会先打 HHH000342，冒号后面才是真正的 SQLException。
+    # 只留这一条，不再开 Hikari 的 DEBUG（日志量太大）。
     org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator: DEBUG
-    com.zaxxer.hikari: DEBUG
