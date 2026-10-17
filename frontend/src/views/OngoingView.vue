@@ -1,11 +1,12 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useDataStore, projectProgress, today, isRepeat, sortProjectCards, priOrd as _priOrd, checklistItemsOf, progressOf, progressAddOn } from '../stores/data'
+import { useDataStore, projectProgress, today, isRepeat, sortProjectCards, priOrd as _priOrd, checklistItemsOf, progressOf } from '../stores/data'
 import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
 import Checklist from '../components/Checklist.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import ProgressBar from '../components/ProgressBar.vue'
+import ProgressModal from '../components/ProgressModal.vue'
 
 const store = useDataStore()
 const tab = ref('projects') // projects | notes
@@ -238,41 +239,17 @@ async function submitPomoCalib() {
   showPomoCalib.value = false
 }
 
-/* ---- 行动进度（只有非重复行动才有：每天记一笔，累加到 100%）----
+/* ---- 行动进度（只有非重复行动才有：填的是最终累计进度，满 100% 算完成）----
    累计未满 100% 时，store 会自动在待办「未分配」里留一条续办提醒；
    满 100% 自动把行动置完成并清掉那条提醒。重复行动靠"按天完成"表达进度，不走这套。 */
 const showProgress = ref(false)
 const progressTarget = ref(null)
-const progressForm = ref({ add: 10, note: '' })
 function openProgress(a) {
   progressTarget.value = a
-  progressForm.value = { add: 10, note: '' }
   showProgress.value = true
 }
-const progPct = (a) => progressOf(a)
-const progTodayAdd = (a) => progressAddOn(a, today())
-// 最近几次进度记录（倒序，最多 6 条）
-const progLogRows = computed(() => {
-  const a = progressTarget.value
-  if (!a) return []
-  return Object.entries(a.progressLog || {})
-    .map(([f, v]) => ({
-      f,
-      add: Math.max(0, Math.round(Number(v && typeof v === 'object' ? v.add : v) || 0)),
-      note: v && typeof v === 'object' ? String(v.note || '') : ''
-    }))
-    .filter(r => r.add > 0)
-    .sort((x, y) => y.f.localeCompare(x.f))
-    .slice(0, 6)
-})
-async function submitProgress() {
-  const a = progressTarget.value
-  if (!a) return
-  const add = Math.round(Number(progressForm.value.add) || 0)
-  if (add <= 0) { store.toast('请填写今天推进的进度（1-100）', 'err'); return }
-  showProgress.value = false
-  await store.recordProgress(a, { add, note: progressForm.value.note })
-}
+// 已完成记 100%（与「待办」侧口径一致）；往下改会重新打开这条行动
+const progPct = (a) => (a && a.status === 'done' ? 100 : progressOf(a))
 
 /* ---- 子项（把一条行动拆成若干小步骤）----
    子项只有名字/完成状态/排序，交互全在 Checklist 组件里；这里只管"这条行动是否展开子列表"。
@@ -458,7 +435,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
               <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
               <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
               <button v-if="!a.repeat?.type" class="btn sm prog-btn" :class="{ on: progPct(a) > 0 }"
-                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击记录今天的完成进度` : '记录今天的完成进度（可累加，满 100% 自动完成）'"
+                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击设置最新进度` : '设置当前累计进度（满 100% 自动完成）'"
                       @click="openProgress(a)">📈 {{ progPct(a) ? progPct(a) + '%' : '进度' }}</button>
               <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
                       :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
@@ -493,7 +470,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
               <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
               <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
               <button v-if="!a.repeat?.type" class="btn sm prog-btn" :class="{ on: progPct(a) > 0 }"
-                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击记录今天的完成进度` : '记录今天的完成进度（可累加，满 100% 自动完成）'"
+                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击设置最新进度` : '设置当前累计进度（满 100% 自动完成）'"
                       @click="openProgress(a)">📈 {{ progPct(a) ? progPct(a) + '%' : '进度' }}</button>
               <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
                       :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
@@ -638,7 +615,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
         </label>
       </div>
       <!-- 开始/结束日期只在重复行动里启用：对重复行动它是"生效区间"；
-           普通行动不设区间，具体哪天做去「待办」里排（拖拽或详情里的日期），进度按天累加。 -->
+           普通行动不设区间，具体哪天做去「待办」里排（拖拽或详情里的日期），进度直接改累计值。 -->
       <div v-if="actionForm.repeat?.type" class="grid-2">
         <label class="field"><span>生效开始日期</span><input v-model="actionForm.startDate" type="date" class="input" /></label>
         <label class="field"><span>生效结束日期（可空 = 一直有效）</span><input v-model="actionForm.endDate" type="date" class="input" :min="actionForm.startDate" /></label>
@@ -699,40 +676,8 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
       </template>
     </Modal>
 
-    <!-- 记录行动进度（按天累加；未满 100% → 待办「未分配」自动留一条续办提醒） -->
-    <Modal v-if="showProgress" title="记录进度" @close="showProgress = false">
-      <p class="muted mb-12 truncate">「{{ progressTarget?.name }}」</p>
-      <div class="prog-now">
-        <div class="flex-between mb-8">
-          <span class="muted" style="font-size:12px">当前累计进度</span>
-          <span class="mono" style="font-weight:700">{{ progPct(progressTarget) }}%</span>
-        </div>
-        <ProgressBar :value="progPct(progressTarget)" />
-        <p v-if="progTodayAdd(progressTarget)" class="muted" style="font-size:12px;margin-top:8px">今天已记录 +{{ progTodayAdd(progressTarget) }}%</p>
-      </div>
-      <label class="field"><span>今天推进（%）</span>
-        <input v-model.number="progressForm.add" type="number" min="1" max="100" step="5" class="input" autofocus />
-      </label>
-      <div class="flex gap-4 mb-12" style="flex-wrap:wrap">
-        <button v-for="n in [5, 10, 20, 25, 50]" :key="n" class="btn sm" @click="progressForm.add = n">+{{ n }}%</button>
-      </div>
-      <label class="field"><span>今天做了什么（可选）</span>
-        <textarea v-model="progressForm.note" class="textarea" rows="3" placeholder="一句话记下今天的推进…"></textarea>
-      </label>
-      <p class="muted" style="font-size:12px">进度会累加到行动上；未满 100% 自动在「待办 → 未分配」留一条续办提醒，满 100% 自动完成行动并清掉提醒。</p>
-      <div v-if="progLogRows.length" class="prog-hist">
-        <div class="muted mb-8" style="font-size:12px">最近记录</div>
-        <div v-for="r in progLogRows" :key="r.f" class="prog-log-row">
-          <span class="mono">{{ r.f }}</span>
-          <span class="prog-add">+{{ r.add }}%</span>
-          <span class="muted grow truncate" :title="r.note">{{ r.note || '—' }}</span>
-        </div>
-      </div>
-      <template #foot>
-        <button class="btn" @click="showProgress = false">取消</button>
-        <button class="btn primary" @click="submitProgress">记录</button>
-      </template>
-    </Modal>
+    <!-- 记录行动进度（填最终累计值；未满 100% → 待办「未分配」自动留一条续办提醒） -->
+    <ProgressModal v-if="showProgress" :action="progressTarget" @close="showProgress = false" />
 
     <!-- 笔记弹窗 -->
     <Modal v-if="showNoteModal" :title="noteForm.id ? '编辑笔记' : '新建笔记'" wide @close="showNoteModal = false">
@@ -803,11 +748,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 .prog-btn { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
 .prog-btn.on { color: var(--primary); border-color: var(--primary-border); background: var(--primary-soft); }
 
-/* 记录进度弹窗 */
-.prog-now { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-bottom: 14px; }
-.prog-hist { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-top: 10px; }
-.prog-log-row { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 3px 0; }
-.prog-add { color: var(--primary); font-weight: 600; min-width: 42px; }
+/* 记录进度弹窗的样式跟随组件（ProgressModal.vue），这里只留行动行上的按钮 */
 .pomo-calib { cursor: pointer; border-bottom: 1px dashed transparent; }
 .pomo-calib:hover { color: var(--primary); border-bottom-color: var(--primary); }
 /* 子项开关：与行动行的其它小按钮同尺寸，全部完成时转绿 */

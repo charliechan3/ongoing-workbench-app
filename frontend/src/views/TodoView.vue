@@ -1,9 +1,11 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf, progressOf } from '../stores/data'
+import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf, checklistParentOf, progressOf, todoProgressOf } from '../stores/data'
 import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
 import Checklist from '../components/Checklist.vue'
+import ProgressBar from '../components/ProgressBar.vue'
+import ProgressModal from '../components/ProgressModal.vue'
 
 const store = useDataStore()
 const view = ref('list') // list | calendar
@@ -71,8 +73,40 @@ const actMap = computed(() => Object.fromEntries(store.actions.map(a => [a.id, a
 
 /* ---- 行/格状态：重复 todo 的"当日实例"完成态以 action.doneDates 为准（按天） ---- */
 const actOf = (todo) => (todo.actionId ? actMap.value[todo.actionId] : null)
-// 绑定行动的累计进度（进度记在行动侧，待办行只读展示）
-const actProg = (todo) => progressOf(actOf(todo))
+/* 进度记在行动侧，待办行只读取展示：
+   - 投影待办（actionId）→ 绑定行动
+   - 续办提醒（fromActionId）→ 来源行动，这样「继续推进」那行也能看到当前推进到哪 */
+const actSrc = (todo) => actOf(todo) || (todo && todo.fromActionId ? actMap.value[todo.fromActionId] : null)
+// 纯待办进度续办提醒（fromTodoId）→ 源待办
+const todoMap = computed(() => Object.fromEntries(store.todos.map(t => [t.id, t])))
+const carryTodoOf = (todo) => (todo && todo.fromTodoId ? todoMap.value[todo.fromTodoId] || null : null)
+/* 一条待办的进度：
+   - 投影待办 / 行动续办提醒 → 看它背后的行动（行动已完成记 100%）
+   - 纯待办的续办提醒 → 看源待办（完成记 100%）
+   - 纯待办 → 看自己的 progress（在「待办」里直接记） */
+const todoProg = (todo) => {
+  const act = actSrc(todo)
+  if (act) return act.status === 'done' ? 100 : progressOf(act)
+  const src = carryTodoOf(todo)
+  if (src) return src.status === 'done' ? 100 : todoProgressOf(src)
+  return todoProgressOf(todo)
+}
+// 记录进度弹窗：传待办本身，绑定了行动的在弹窗里自动转给行动（与「进行中」同一套口径：填最终值）
+const showProg = ref(false)
+const progTarget = ref(null)
+function openTodoProgress(todo) {
+  if (!todo) return
+  progTarget.value = todo
+  showProg.value = true
+}
+// 详情弹窗里记进度：先关详情再开进度弹窗（避免两个弹窗叠在一起）
+function openProgressFromDetail() {
+  if (!detailTodo.value) return
+  // 详情里是副本，进度要记到 store 里的真身
+  progTarget.value = store.todos.find(t => t.id === detailTodo.value.id) || detailTodo.value
+  showDetail.value = false
+  showProg.value = true
+}
 const rowRepeatLabel = (todo) => {
   const a = actOf(todo)
   return isRepeat(a) ? repeatLabel(a.repeat) : ''
@@ -154,9 +188,24 @@ async function toggleRow(r) {
 /* ---- 子项（把一条待办拆成若干小步骤）：行内只需一个开关 + 完成计数 ----
    子项本身只有名字/完成状态/排序，交互交给 Checklist 组件；
    这里只负责"该行是否展开子列表"，默认有条目就展开（加完立刻看得见），手动收起后记住选择。
-   绑定行动的待办与行动共用同一份子项，所以 parent 同时带上 actionId 与 todoId。 */
+   绑定行动的待办与行动共用同一份子项；「继续推进」这类续办提醒也算绑定
+   （fromActionId），一并挂到背后行动的子项上 —— 子项跟着行动长期存在，勾选状态
+   在「进行中」和「待办」两边是同一份，不会因为续办而重置。 */
 const ckOpen = ref({})
-const ckItemsOf = (todo) => checklistItemsOf(store.checklist, { actionId: todo.actionId, todoId: todo.id })
+/* 待办 → 子项归属范围：
+   - 投影待办（actionId）→ 背后行动 + 自己
+   - 续办提醒（fromActionId）→ 背后行动 + 行动投影待办（早期子项可能落在 todo 侧）+ 自己
+   - 纯待办的续办提醒（fromTodoId）→ 源待办（checklistParentOf 已把 todoId 指回源），读写在同一份
+   于是「继续推进」那条展开的就是行动现有的子项，完成状态原样保留，勾选两边同步。 */
+const ckParent = (todo) => {
+  const p = checklistParentOf(todo)
+  if (!todo.actionId && p.actionId) {
+    const proj = store.todos.find(t => t.actionId === p.actionId)
+    if (proj && proj.id !== todo.id) p.todoIds = [proj.id]
+  }
+  return p
+}
+const ckItemsOf = (todo) => checklistItemsOf(store.checklist, ckParent(todo))
 const ckTotal = (todo) => ckItemsOf(todo).length
 const ckDone = (todo) => ckItemsOf(todo).filter(i => i.done).length
 const ckShown = (todo) => ckOpen.value[todo.id] ?? ckTotal(todo) > 0
@@ -601,8 +650,12 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
                 <span v-if="rowRepeatLabel(r.todo)" class="tag cyan xs">↻ {{ rowRepeatLabel(r.todo) }}</span>
                 <span v-if="r.todo.actionId" class="tag green xs">行动</span>
                 <!-- 行动进度未满 100% 时自动生成的续办提醒（自动维护，不参与行动双向同步） -->
-                <span v-if="r.todo.fromActionId" class="tag xs" title="由行动进度自动生成：满 100% 后自动清理">续办</span>
-                <span v-if="actProg(r.todo) > 0" class="tag xs" title="绑定行动的累计完成进度">📈 {{ actProg(r.todo) }}%</span>
+                <span v-if="r.todo.fromActionId || r.todo.fromTodoId" class="tag xs" title="由进度自动生成：满 100% 后自动清理">续办</span>
+                <!-- 进度：点一下就能记"今天推进了多少"。绑定行动的记到行动上，纯待办记在自己身上；
+                     重复待办按天勾完成，没有累计进度这回事，所以不显示 -->
+                <span v-if="!r.repeat" class="tag xs prog-tag" :class="{ on: todoProg(r.todo) > 0 }"
+                      :title="todoProg(r.todo) > 0 ? `当前推进 ${todoProg(r.todo)}%，点击设置最新进度` : '点击设置当前累计进度'"
+                      @click.stop="openTodoProgress(r.todo)">📈 {{ todoProg(r.todo) > 0 ? todoProg(r.todo) + '%' : '进度' }}</span>
               </div>
             </div>
             <!-- 操作区独立成组：桌面端紧跟文本、贴行尾（视觉与原先一致）；
@@ -619,12 +672,12 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
               <button class="icon-btn completion-btn" :class="{ on: r.todo.completionNote }"
                       :title="r.todo.completionNote ? '完成情况：' + r.todo.completionNote + '（点击编辑）' : '填写完成情况'"
                       @click="openCompletion(r.todo)">📝</button>
-              <button v-if="!r.todo.actionId" class="icon-btn act-upgrade" title="升级" @click="convertTarget = r.todo; showConvert = true">↗</button>
+              <button v-if="!r.todo.actionId && !r.todo.fromActionId && !r.todo.fromTodoId" class="icon-btn act-upgrade" title="升级" @click="convertTarget = r.todo; showConvert = true">↗</button>
               <button class="icon-btn" title="详情" @click="openDetail(r.todo)">⋯</button>
               <button class="icon-btn" title="删除" @click="delTodo(r.todo)">✕</button>
             </div>
           </div>
-          <Checklist v-if="ckShown(r.todo)" :action-id="r.todo.actionId || ''" :todo-id="r.todo.id" />
+          <Checklist v-if="ckShown(r.todo)" :scope="ckParent(r.todo)" />
           </div>
           <div v-if="!g.list.length" class="empty" style="padding:16px">空</div>
         </div>
@@ -686,6 +739,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
                @click="clickCalCell(c)">
             <span class="checkbox" :class="{ on: c.done }">✓</span>
             <span class="grow truncate">{{ c.repeat ? '↻ ' : '' }}{{ c.todo.text }}</span>
+            <span v-if="todoProg(c.todo) > 0" class="tag xs prog-tag" :title="`当前推进 ${todoProg(c.todo)}%`">📈 {{ todoProg(c.todo) }}%</span>
             <span class="tag" :class="priCls(c.todo.priority)">{{ c.todo.priority }}</span>
           </div>
         </div>
@@ -710,7 +764,18 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
         <span v-if="detailTodo.projectId" class="tag primary">项目：{{ store.projectMap[detailTodo.projectId]?.name }}</span>
         <span v-if="detailTodo.taskId && store.taskMap[detailTodo.taskId]" class="tag cyan">任务：{{ store.taskMap[detailTodo.taskId]?.name }}</span>
         <span v-if="detailTodo.actionId" class="tag green">已绑定行动（自动同步）</span>
-        <span v-if="actProg(detailTodo) > 0" class="tag">📈 行动进度 {{ actProg(detailTodo) }}%</span>
+        <span v-if="detailTodo.fromActionId" class="tag gray">续办提醒（随行动进度自动维护）</span>
+        <span v-if="detailTodo.fromTodoId" class="tag gray">续办提醒（随待办进度自动维护）</span>
+      </div>
+      <!-- 进度：绑定行动的看行动推进，纯待办记在自己身上；这里能直接看到推进到哪，并就地记一笔
+           重复待办按天勾完成，没有累计进度，所以不显示 -->
+      <div v-if="!dHasRep" class="prog-detail">
+        <div class="flex-between mb-8" style="font-size:12px">
+          <span class="muted">{{ actSrc(detailTodo) ? `「${actSrc(detailTodo).name}」` : '这条待办' }}推进 {{ todoProg(detailTodo) }}%，还剩 {{ 100 - todoProg(detailTodo) }}%</span>
+          <span class="mono" style="font-weight:700">{{ todoProg(detailTodo) }}%</span>
+        </div>
+        <ProgressBar :value="todoProg(detailTodo)" />
+        <button class="btn sm" style="margin-top:10px" @click="openProgressFromDetail">📈 记录今天的进度</button>
       </div>
       <label class="field"><span>内容</span><input v-model="detailTodo.text" class="input" placeholder="要做什么？" /></label>
       <label class="field"><span>备注</span><textarea v-model="detailTodo.note" class="textarea" rows="4"></textarea></label>
@@ -751,11 +816,14 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
       </div>
       <p v-if="dHasRep" class="muted" style="font-size:12px;margin-top:-6px">设置了重复后：待办按规则在日历自动展开、完成按天记录；已绑定行动或纯待办升级时会同步到「进行中」。</p>
       <template #foot>
-        <button v-if="!detailTodo.actionId" class="btn" title="升级为项目或行动" @click="convertFromDetail">升级</button>
+        <button v-if="!detailTodo.actionId && !detailTodo.fromActionId && !detailTodo.fromTodoId" class="btn" title="升级为项目或行动" @click="convertFromDetail">升级</button>
         <button class="btn" @click="showDetail = false">取消</button>
         <button class="btn primary" @click="saveDetail">保存</button>
       </template>
     </Modal>
+
+    <!-- 记录行动进度（与「进行中」行动行同一个弹窗：填最终累计值、满 100% 自动完成行动并清掉续办提醒） -->
+    <ProgressModal v-if="showProg" :todo="progTarget" @close="showProg = false" />
 
     <!-- 拖拽改期弹窗（拖到底部"其他日期"区域触发） -->
     <Modal v-if="showMove" title="移动到指定日期" @close="showMove = false">
@@ -824,6 +892,12 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 .sub-btn.on { color: #2a8f5e; border-color: #a8dbc2; }
 .tag.xs { font-size: 10px; padding: 0 6px; }
 .tag.green { background: #e7f6ee; color: #2a8f5e; }
+/* 进度标签：既是状态也是入口（点开「记录进度」弹窗）；记过进度加粗 */
+.tag.prog-tag { font-size: 11px; font-weight: 600; cursor: pointer; color: var(--primary); background: var(--primary-soft); border: 1px solid var(--primary-border); }
+.tag.prog-tag.on { font-weight: 700; }
+.tag.prog-tag:hover { color: #fff; background: var(--primary); border-color: var(--primary); }
+/* 详情弹窗里的行动进度块 */
+.prog-detail { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-bottom: 14px; }
 .completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
 
 /* 7 列等宽。必须写成 minmax(0, 1fr)：1fr 的最小值默认是 auto（= 内容最小宽），
@@ -869,6 +943,8 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
   .todo-block + .todo-block { border-top: 1px solid var(--border); }
   .todo-row .icon-btn { width: 36px; height: 36px; min-width: 36px; font-size: 15px; }
   .pomo-btn, .sub-btn { padding: 7px 12px; min-height: 36px; }
+  /* 触屏上进度标签要当按钮点：做成 36px 高的胶囊，落点稳 */
+  .tag.prog-tag { min-height: 36px; display: inline-flex; align-items: center; padding: 0 12px; font-size: 12px; border-radius: 999px; }
   .pomo-cnt { font-size: 12px; }
   /* 「升级」在手机上收进详情弹窗：多这一个图标会让纯待办行多折一行，
      导致列表里各条高度不一致（详见 templates 里 #foot 的「升级」按钮） */

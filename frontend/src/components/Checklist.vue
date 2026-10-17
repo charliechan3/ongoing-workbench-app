@@ -15,11 +15,15 @@ import { useInlineRename } from '../composables/useInlineRename'
  */
 const props = defineProps({
   actionId: { type: String, default: '' },
-  todoId: { type: String, default: '' }
+  todoId: { type: String, default: '' },
+  // 可选：直接给一个归属范围对象（{ actionId, todoId, actionIds?, todoIds? }）。
+  // 「继续推进」这类续办提醒要把背后行动 + 行动投影待办的子项一起读，用 scope 传更省事；
+  // 给了 scope 就以它为准（写入仍走 checklistOwnerOf：有行动就落在行动侧）。
+  scope: { type: Object, default: null }
 })
 
 const store = useDataStore()
-const parent = computed(() => ({ actionId: props.actionId, todoId: props.todoId }))
+const parent = computed(() => props.scope || { actionId: props.actionId, todoId: props.todoId })
 const items = computed(() => checklistItemsOf(store.checklist, parent.value))
 
 /* ---- 添加：底部虚线按钮 → 行内输入框，回车连续添加（清空但不收起） ---- */

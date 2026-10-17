@@ -28,8 +28,12 @@ spring:
       connection-timeout: 30000
       # 建池时允许等待首个连接就绪（冷启动），超过后启动失败
       initialization-fail-timeout: 30000
-      # 定期探活，避免连接被 Supavisor 静默断开后仍留在池里
-      keepalive-time: 60000
+      # 定期探活，避免连接被 Supavisor 静默断开后仍留在池里。
+      # 跨境链路实测空闲 20s 左右就可能被中间设备断掉，所以压到 15s；
+      # 连接寿命限 3 分钟，宁可多建几次也不要用到已死的旧连接。
+      keepalive-time: 15000
+      max-lifetime: 180000
+      validation-timeout: 3000
       maximum-pool-size: 5
       minimum-idle: 1
   # 固定方言：Hibernate 连不上库时会抛「Unable to determine Dialect without JDBC metadata」，

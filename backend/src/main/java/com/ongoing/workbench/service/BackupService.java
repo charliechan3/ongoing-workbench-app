@@ -44,12 +44,12 @@ public class BackupService {
             "projects", List.of("areaId"),
             "tasks",    List.of("projectId", "areaId"),
             "actions",  List.of("taskId", "projectId", "areaId"),
-            "todos",    List.of("projectId", "taskId", "fromActionId"),
+            "todos",    List.of("projectId", "taskId", "fromActionId", "fromTodoId"),
             "checklist", List.of("actionId", "todoId"),
             "notes",    List.of("projectId"));
     private static final Map<String, String> REF_TYPE = Map.of(
             "areaId", "areas", "projectId", "projects", "taskId", "tasks",
-            "actionId", "actions", "todoId", "todos", "fromActionId", "actions");
+            "actionId", "actions", "todoId", "todos", "fromActionId", "actions", "fromTodoId", "todos");
 
     /* ================= 导出 ================= */
 
