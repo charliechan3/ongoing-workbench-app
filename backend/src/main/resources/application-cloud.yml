@@ -29,9 +29,10 @@ spring:
       # 建池时允许等待首个连接就绪（冷启动），超过后启动失败
       initialization-fail-timeout: 30000
       # 定期探活，避免连接被 Supavisor 静默断开后仍留在池里。
-      # 跨境链路实测空闲 20s 左右就可能被中间设备断掉，所以压到 15s；
-      # 连接寿命限 3 分钟，宁可多建几次也不要用到已死的旧连接。
-      keepalive-time: 15000
+      # 注意：Hikari 要求该值 >= 30000，低于 30s 会被直接禁用（日志只是 WARN
+      # "keepaliveTime is less than 30000ms, disabling it"，很容易漏看），
+      # 之前写 15000 实际等于没开保活。
+      keepalive-time: 30000
       max-lifetime: 180000
       validation-timeout: 3000
       maximum-pool-size: 5
