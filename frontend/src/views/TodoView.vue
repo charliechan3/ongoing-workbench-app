@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf, checklistParentOf, progressOf, todoProgressOf } from '../stores/data'
+import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf, checklistParentOf, progressOf, todoProgressOf, isTodoShelved } from '../stores/data'
 import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
 import Checklist from '../components/Checklist.vue'
@@ -70,6 +70,9 @@ async function submitAdd() {
 }
 
 const actMap = computed(() => Object.fromEntries(store.actions.map(a => [a.id, a])))
+/* 搁置判定：绑定行动的看行动上的标记，纯待办看自己（续办提醒跟着源条目走）——
+   列表分组、日历、搁置区都用这一个口径，避免"收起来一半" */
+const shelved = (todo) => isTodoShelved(todo, store.actions, store.todos)
 
 /* ---- 行/格状态：重复 todo 的"当日实例"完成态以 action.doneDates 为准（按天） ---- */
 const actOf = (todo) => (todo.actionId ? actMap.value[todo.actionId] : null)
@@ -143,6 +146,7 @@ const groups = computed(() => {
     gmap[f].list.push({ todo, done, repeat: isRep, day: f })
   }
   for (const todo of store.todos) {
+    if (shelved(todo)) continue // 搁置的不进列表，统一收在「搁置区」
     const a = actOf(todo)
     if (isRepeat(a)) continue // 重复待办下面按窗口逐日展开
     if (!todo.date) {
@@ -155,6 +159,7 @@ const groups = computed(() => {
   }
   for (const day of listWindow.value) {
     for (const todo of store.todos) {
+      if (shelved(todo)) continue
       const a = actOf(todo)
       if (isRepeat(a)) { if (todoHitsDay(todo, a, day.f)) push(day.f, todo, repeatDoneOn(a, day.f), true); continue }
       // 跨日 todo：区间命中窗口日时逐日展开（锚点日已由上面落组，跳过避免重复）
@@ -255,6 +260,7 @@ const calDays = computed(() => {
     const f = fmtDate(d)
     const cells = []
     for (const todo of store.todos) {
+      if (shelved(todo)) continue // 搁置的不进日历
       const a = actOf(todo)
       if (isRepeat(a)) {
         // 重复行动：规则命中且处于生效区间才显示当天实例；完成态 = doneDates 含该日
@@ -420,6 +426,32 @@ async function doConvert(type) {
   await store.remove('todos', t.id, { silent: true })
   showConvert.value = false
   store.toast(`已升级为${type === 'project' ? '项目' : '行动'}`)
+}
+
+/* ---- 搁置区（低调入口）----
+   搁置 = 暂时不做：从待办列表 / 日历 / 首页今日里收起来，行动本身仍留在项目里。
+   入口是列表第一行右侧的灰胶囊，不占额外版面；放回来时选一个具体日期，
+   绑定行动的会同步行动的起止日期，所以「进行中」的排期也跟着回来。 */
+const shelvedRows = computed(() => store.shelvedTodos)
+const showShelved = ref(false)
+const shelfDate = ref({}) // 逐条的"放回日期"，打开时默认今天
+function openShelved() {
+  const m = {}
+  for (const t of store.shelvedTodos) m[t.id] = today()
+  shelfDate.value = m
+  showShelved.value = true
+}
+async function releaseShelved(t) {
+  const d = shelfDate.value[t.id] || today()
+  await store.unshelveTodo(t, d)
+  if (!store.shelvedTodos.length) showShelved.value = false
+}
+// 详情弹窗里发起搁置：先关详情，避免弹窗叠着
+async function shelveFromDetail() {
+  if (!detailTodo.value) return
+  const t = store.todos.find(x => x.id === detailTodo.value.id) || detailTodo.value
+  showDetail.value = false
+  await store.shelveTodo(t)
 }
 
 /* ---- 删除（联动确认） ---- */
@@ -625,12 +657,17 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 
     <!-- 列表视图 -->
     <template v-if="view === 'list'">
-      <div v-for="g in shownGroups" :key="g.label" class="mb-16 group-drop" :class="{ 'drop-target': hoverGroup === g.label }"
+      <div v-for="(g, i) in shownGroups" :key="g.label" class="mb-16 group-drop" :class="{ 'drop-target': hoverGroup === g.label }"
            @dragover.prevent="hoverGroup = g.label" @dragleave="hoverGroup === g.label && (hoverGroup = '')" @drop.prevent="dropOnGroup(g, $event)">
         <div class="group-head">
           <span>{{ g.label }}</span>
           <span v-if="!g.isToday && !g.isUnassigned" class="muted" style="font-size:12px;font-weight:400">{{ g.date }}</span>
           <span class="muted">{{ g.list.filter(r => r.done).length }}/{{ g.list.length }}</span>
+          <!-- 搁置区入口：挂在列表第一行（通常是「未分配」）的右侧，不占额外版面，日期再多也不用来回滚 -->
+          <button v-if="i === 0" class="shelve-chip" :class="{ on: shelvedRows.length }" title="暂时不做的条目都收在这里，选个日期就能放回待办" @click="openShelved">
+            <span>🗄 搁置区</span>
+            <span v-if="shelvedRows.length" class="n">{{ shelvedRows.length }}</span>
+          </button>
         </div>
         <div class="card" style="padding:6px 10px">
           <div v-for="r in g.list" :key="r.todo.id" class="todo-block">
@@ -682,6 +719,13 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
           <div v-if="!g.list.length" class="empty" style="padding:16px">空</div>
         </div>
       </div>
+      <!-- 列表为空（或只剩搁置项）时第一行不存在：入口单独占一行右侧，别让搁置区打不开 -->
+      <div v-if="!shownGroups.length" class="shelf-bar">
+        <button class="shelve-chip" :class="{ on: shelvedRows.length }" title="暂时不做的条目都收在这里，选个日期就能放回待办" @click="openShelved">
+          <span>🗄 搁置区</span>
+          <span v-if="shelvedRows.length" class="n">{{ shelvedRows.length }}</span>
+        </button>
+      </div>
       <!-- 底部放置区：目标日期尚无分组时，拖到此处选择日期 -->
       <div class="drop-new" :class="{ over: hoverNew }"
            @dragover.prevent="hoverNew = true" @dragleave="hoverNew = false" @drop.prevent="dropToNew($event)">
@@ -694,6 +738,13 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 
     <!-- 日历视图 -->
     <template v-else>
+      <!-- 日历没有分组行：入口放在日历右上方，位置与列表第一行的胶囊一致 -->
+      <div class="shelf-bar">
+        <button class="shelve-chip" :class="{ on: shelvedRows.length }" title="暂时不做的条目都收在这里，选个日期就能放回待办" @click="openShelved">
+          <span>🗄 搁置区</span>
+          <span v-if="shelvedRows.length" class="n">{{ shelvedRows.length }}</span>
+        </button>
+      </div>
       <div class="card">
         <div class="flex-between mb-12">
           <button class="btn ghost sm cal-nav" @click="calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1)">‹</button>
@@ -817,9 +868,32 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
       <p v-if="dHasRep" class="muted" style="font-size:12px;margin-top:-6px">设置了重复后：待办按规则在日历自动展开、完成按天记录；已绑定行动或纯待办升级时会同步到「进行中」。</p>
       <template #foot>
         <button v-if="!detailTodo.actionId && !detailTodo.fromActionId && !detailTodo.fromTodoId" class="btn" title="升级为项目或行动" @click="convertFromDetail">升级</button>
+        <button class="btn" title="暂时不做：从待办里收起来，行动仍留在项目里" @click="shelveFromDetail">搁置</button>
         <button class="btn" @click="showDetail = false">取消</button>
         <button class="btn primary" @click="saveDetail">保存</button>
       </template>
+    </Modal>
+
+    <!-- 搁置区：收起来的条目，选日期就能放回待办 -->
+    <Modal v-if="showShelved" title="搁置区" @close="showShelved = false">
+      <p class="muted mb-12" style="font-size:12px">已从待办和日历里收起，行动仍留在项目里。选一个日期就能放回来。</p>
+      <div v-if="!shelvedRows.length" class="empty" style="padding:16px">还没有搁置的条目</div>
+      <div v-for="t in shelvedRows" :key="t.id" class="shelf-row">
+        <div class="grow" style="min-width:0">
+          <div class="truncate">{{ t.text }}</div>
+          <div class="flex gap-4" style="margin-top:3px;align-items:center;flex-wrap:wrap">
+            <span v-if="t.projectId && store.projectMap[t.projectId]" class="tag gray xs">{{ store.projectMap[t.projectId].name }}</span>
+            <span v-if="t.actionId" class="tag green xs">行动</span>
+            <span class="muted" style="font-size:11px">搁置于 {{ store.shelveDateOf(t) || '—' }}</span>
+          </div>
+        </div>
+        <div class="shelf-acts">
+          <input v-model="shelfDate[t.id]" type="date" class="input shelf-date" title="放回的日期" />
+          <button class="btn sm primary" @click="releaseShelved(t)">放出来</button>
+          <button class="icon-btn" title="删除" @click="delTodo(t)">✕</button>
+        </div>
+      </div>
+      <template #foot><button class="btn" @click="showShelved = false">关闭</button></template>
     </Modal>
 
     <!-- 记录行动进度（与「进行中」行动行同一个弹窗：填最终累计值、满 100% 自动完成行动并清掉续办提醒） -->
@@ -900,6 +974,26 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 .prog-detail { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-bottom: 14px; }
 .completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
 
+/* 搁置区入口：列表第一行（通常是「未分配」）右侧的灰胶囊；空列表与日历视图用 .shelf-bar 单独占一行右侧 */
+.group-head .shelve-chip { margin-left: auto; align-self: center; }
+.shelf-bar { display: flex; justify-content: flex-end; margin: 2px 0 8px; }
+.shelve-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; font-size: 12px; line-height: 1.6;
+  color: var(--text-3); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 999px;
+  cursor: pointer; user-select: none; white-space: nowrap;
+  transition: color .15s, background .15s, border-color .15s;
+}
+.shelve-chip:hover { color: var(--primary); border-color: var(--primary-border); background: var(--primary-soft); }
+/* 有东西收着时给个颜色点，一眼知道里面不是空的 */
+.shelve-chip.on { color: var(--text-2); border-color: var(--border-strong); }
+.shelve-chip .n { font-size: 10.5px; font-weight: 700; color: var(--primary); }
+.shelf-row { display: flex; align-items: center; gap: 10px; padding: 10px 4px; }
+.shelf-row + .shelf-row { border-top: 1px solid var(--border); }
+.shelf-acts { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.shelf-date { width: 148px; padding: 4px 8px; font-size: 12px; }
+
 /* 7 列等宽。必须写成 minmax(0, 1fr)：1fr 的最小值默认是 auto（= 内容最小宽），
    而格子里的待办文字是 nowrap，窄屏下会被内容撑开导致整个日历横向溢出（实测手机端只露出 3 列）。
    minmax(0, ...) 让列宽完全由容器决定，文字改用省略号截断。 */
@@ -946,6 +1040,12 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
   /* 触屏上进度标签要当按钮点：做成 36px 高的胶囊，落点稳 */
   .tag.prog-tag { min-height: 36px; display: inline-flex; align-items: center; padding: 0 12px; font-size: 12px; border-radius: 999px; }
   .pomo-cnt { font-size: 12px; }
+  /* 搁置区：标题旁的胶囊抬到 32px 以上（手指落点），弹窗里日期与按钮换到第二行，别把名字挤没 */
+  .shelve-chip { min-height: 32px; padding: 0 12px; font-size: 13px; }
+  .shelf-row { flex-wrap: wrap; row-gap: 8px; }
+  .shelf-acts { width: 100%; }
+  .shelf-date { flex: 1; min-width: 0; height: 36px; }
+  .shelf-acts .btn.sm { min-height: 36px; }
   /* 「升级」在手机上收进详情弹窗：多这一个图标会让纯待办行多折一行，
      导致列表里各条高度不一致（详见 templates 里 #foot 的「升级」按钮） */
   .act-upgrade { display: none; }

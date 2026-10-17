@@ -58,6 +58,7 @@ const dueActions = computed(() => {
   const td = today()
   return store.actions
     .filter(a => {
+      if (a.shelved) return false // 已搁置：不在首页催（待办页「搁置区」可放回来）
       if (isRepeat(a)) {
         // 重复行动：今天已完成(记于 doneDates)则不再提示；否则即使昨日做过今天也照常出现
         if ((a.doneDates || []).includes(td)) return false

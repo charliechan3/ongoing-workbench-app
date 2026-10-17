@@ -429,6 +429,8 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
                  手机上整体换到第二行并在内部继续换行（见 scoped 样式的 .row-acts） -->
             <div class="row-acts">
               <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
+              <!-- 搁置：从待办里收起来了，但行动本身仍留在项目里；在待办页「搁置区」选日期放回来 -->
+              <span v-if="a.shelved" class="tag gray" title="已从待办里搁置（行动仍在项目里），可在待办的「搁置区」放回来">已搁置</span>
               <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
                       :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
                       @click="openCompletion(a)">📝</button>
@@ -464,6 +466,8 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
                  手机上整体换到第二行并在内部继续换行（见 scoped 样式的 .row-acts） -->
             <div class="row-acts">
               <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
+              <!-- 搁置：从待办里收起来了，但行动本身仍留在项目里；在待办页「搁置区」选日期放回来 -->
+              <span v-if="a.shelved" class="tag gray" title="已从待办里搁置（行动仍在项目里），可在待办的「搁置区」放回来">已搁置</span>
               <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
                       :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
                       @click="openCompletion(a)">📝</button>

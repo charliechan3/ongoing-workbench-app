@@ -78,6 +78,37 @@ export function repeatDoneOn(action, f) {
 // 行动是否是重复型
 export const isRepeat = (action) => !!(action && action.repeat && action.repeat.type)
 
+/* ============ 搁置（2026-10-17）============
+   待办里可以把一条收进「搁置区」：列表 / 日历 / 今日都不再显示，行动本身仍留在
+   「进行中」的项目里（只在行动上打一个已搁置标记）。放出来时指定一个日期，回到那天。
+   状态只有一处真相，按归属取值：
+   - 绑定行动的待办（投影 actionId）和它的续办提醒（fromActionId）→ 看 action.shelved
+   - 纯待办（含它的续办提醒 fromTodoId）→ 看源待办自己的 shelved
+   这样搁置一条行动时，它的投影待办和「继续推进」提醒会一起收起来，不会留半条在外面。 */
+export function isTodoShelved(todo, actions = [], todos = []) {
+  if (!todo) return false
+  const aid = todo.actionId || todo.fromActionId
+  if (aid) {
+    const a = (actions || []).find(x => x.id === aid)
+    return !!(a && a.shelved)
+  }
+  const base = todo.fromTodoId ? ((todos || []).find(x => x.id === todo.fromTodoId) || todo) : todo
+  return !!base.shelved
+}
+// 搁置区里的"代表条目"：投影待办 / 源待办各占一条，续办提醒不重复列出来
+export const isShelveRep = (todo) => !!(todo && !todo.fromActionId && !todo.fromTodoId)
+// 搁置日期（绑定行动的取行动上的，纯待办取自己的）
+export function shelveDateOf(todo, actions = [], todos = []) {
+  if (!todo) return ''
+  const aid = todo.actionId || todo.fromActionId
+  if (aid) {
+    const a = (actions || []).find(x => x.id === aid)
+    return (a && a.shelvedAt) || ''
+  }
+  const base = todo.fromTodoId ? ((todos || []).find(x => x.id === todo.fromTodoId) || todo) : todo
+  return base.shelvedAt || ''
+}
+
 /* ============ 行动进度（2026-10-17）============
    非重复行动才有"进度"这套：填入的是**最终累计进度**（0-100 的绝对值），
    直接写进 action.progress，不再做加法。日志按天留档 progressLog = { 'YYYY-MM-DD': { add, note } }，
@@ -257,17 +288,26 @@ export const useDataStore = defineStore('data', {
     areaMap: s => Object.fromEntries(s.areas.map(a => [a.id, a])),
     mediaMap: s => Object.fromEntries(s.medias.map(m => [m.id, m])),
 
-    openTodos: s => s.todos.filter(t => t.status !== 'done').sort((a, b) => (a.priority || 'P3').localeCompare(b.priority || 'P3')),
+    // 未完成待办（不含已搁置的：搁置是"收起来"，不该继续算在待办数里）
+    openTodos: s => s.todos
+      .filter(t => t.status !== 'done' && !isTodoShelved(t, s.actions, s.todos))
+      .sort((a, b) => (a.priority || 'P3').localeCompare(b.priority || 'P3')),
     doneTodos: s => s.todos.filter(t => t.status === 'done'),
-    todayTodos: s => s.todos.filter(t => (t.date === today() && t.status !== 'done')),
+    todayTodos: s => s.todos.filter(t => (t.date === today() && t.status !== 'done' && !isTodoShelved(t, s.actions, s.todos))),
+
+    // 搁置区：已搁置的代表条目（投影待办 / 源待办），按搁置日期倒序
+    shelvedTodos: s => s.todos
+      .filter(t => isShelveRep(t) && isTodoShelved(t, s.actions, s.todos))
+      .sort((a, b) => String(shelveDateOf(b, s.actions, s.todos)).localeCompare(String(shelveDateOf(a, s.actions, s.todos)))),
 
     // 「今天」待办统一口径（与 TodoView 列表"今天"分组一致）：
     // 重复行动命中今天且在生效区间 → 出现（完成态看 doneDates）；普通 todo date===今天 → 出现（含已完成的，沉底）
+    // 已搁置的整条不出现（搁置 = 暂时不做，别每天在首页提醒）
     todayTodoRows: (s) => {
       const t = today()
       const actMap = Object.fromEntries(s.actions.map(a => [a.id, a]))
       const rows = s.todos
-        .filter(td => todoHitsDay(td, td.actionId ? actMap[td.actionId] : null, t))
+        .filter(td => !isTodoShelved(td, s.actions, s.todos) && todoHitsDay(td, td.actionId ? actMap[td.actionId] : null, t))
         .map(td => {
           const a = td.actionId ? actMap[td.actionId] : null
           return {
@@ -779,6 +819,51 @@ export const useDataStore = defineStore('data', {
       }
       if (!opts.silent) this.toast(`已移至 ${newDate}`)
       return true
+    },
+
+    /* ============ 搁置 / 放出来（2026-10-17）============
+       搁置一条待办：从待办列表、日历、今日里收起来，收进待办页的「搁置区」；
+       绑定行动的只在行动上记标记 —— 行动本身照旧留在「进行中」的项目里。
+       放出来：取消标记，并把日期改成指定的那一天（行动的 startDate 会同步投影待办）；
+       重复行动同样落在新日期上，若结束日期早于新日期则清空，否则放出来又被区间挡住。 */
+    isShelved(todo) {
+      return isTodoShelved(todo, this.actions, this.todos)
+    },
+    shelveDateOf(todo) {
+      return shelveDateOf(todo, this.actions, this.todos)
+    },
+    async shelveTodo(todo, opts = {}) {
+      if (!todo) return
+      const d = today()
+      const aid = todo.actionId || todo.fromActionId
+      if (aid) {
+        const act = this.actions.find(a => a.id === aid)
+        if (act) await this.update('actions', act.id, { shelved: true, shelvedAt: d }, { silent: true })
+      } else {
+        // 纯待办的续办提醒：标记落在源待办上，两处一起收起来
+        const base = todo.fromTodoId ? (this.todos.find(t => t.id === todo.fromTodoId) || todo) : todo
+        await this.update('todos', base.id, { shelved: true, shelvedAt: d }, { silent: true })
+      }
+      if (!opts.silent) this.toast(opts.msg || '已搁置，可在待办页的「搁置区」放回来')
+    },
+    async unshelveTodo(todo, date, opts = {}) {
+      if (!todo) return
+      const d = date || today()
+      const aid = todo.actionId || todo.fromActionId
+      if (aid) {
+        const act = this.actions.find(a => a.id === aid)
+        if (act) {
+          const patch = { shelved: false, shelvedAt: null, startDate: d }
+          if (act.endDate && act.endDate < d) patch.endDate = null
+          await this.updateAction(act.id, patch, { silent: true })
+        }
+      } else {
+        const base = todo.fromTodoId ? (this.todos.find(t => t.id === todo.fromTodoId) || todo) : todo
+        const patch = { shelved: false, shelvedAt: null, date: d, startDate: d }
+        if (base.endDate && base.endDate < d) patch.endDate = null
+        await this.update('todos', base.id, patch, { silent: true })
+      }
+      if (!opts.silent) this.toast(opts.msg || `已放回 ${d}`)
     },
 
     /* 勾选/取消行动（职业发展 & 首页）：

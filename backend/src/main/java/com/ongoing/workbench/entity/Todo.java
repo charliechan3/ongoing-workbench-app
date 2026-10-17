@@ -24,6 +24,8 @@ public class Todo extends OwnedEntity {
     private Integer pomoEstimate = 0;
     private Integer pomoCount = 0;
     private Integer progress = 0; // 纯待办自己的累计进度（0-100）；绑定行动时以行动为准，这里不写
+    private Boolean shelved = false; // 已搁置（纯待办用；绑定行动时以行动上的标记为准）
+    private String shelvedAt; // 搁置日期（YYYY-MM-DD）
     @Convert(converter = JsonMapConverter.class)
     @Column(length = 4000)
     private Map<String, Object> progressLog; // 每日进度记录：{ "2026-10-17": { add: 20, note: "..." } }
