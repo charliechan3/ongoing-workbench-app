@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf } from '../stores/data'
+import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf, progressOf } from '../stores/data'
 import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
 import Checklist from '../components/Checklist.vue'
@@ -71,6 +71,8 @@ const actMap = computed(() => Object.fromEntries(store.actions.map(a => [a.id, a
 
 /* ---- 行/格状态：重复 todo 的"当日实例"完成态以 action.doneDates 为准（按天） ---- */
 const actOf = (todo) => (todo.actionId ? actMap.value[todo.actionId] : null)
+// 绑定行动的累计进度（进度记在行动侧，待办行只读展示）
+const actProg = (todo) => progressOf(actOf(todo))
 const rowRepeatLabel = (todo) => {
   const a = actOf(todo)
   return isRepeat(a) ? repeatLabel(a.repeat) : ''
@@ -598,6 +600,9 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
                 <span v-if="r.todo.taskId && store.taskMap[r.todo.taskId]" class="tag primary xs">{{ store.taskMap[r.todo.taskId]?.name }}</span>
                 <span v-if="rowRepeatLabel(r.todo)" class="tag cyan xs">↻ {{ rowRepeatLabel(r.todo) }}</span>
                 <span v-if="r.todo.actionId" class="tag green xs">行动</span>
+                <!-- 行动进度未满 100% 时自动生成的续办提醒（自动维护，不参与行动双向同步） -->
+                <span v-if="r.todo.fromActionId" class="tag xs" title="由行动进度自动生成：满 100% 后自动清理">续办</span>
+                <span v-if="actProg(r.todo) > 0" class="tag xs" title="绑定行动的累计完成进度">📈 {{ actProg(r.todo) }}%</span>
               </div>
             </div>
             <!-- 操作区独立成组：桌面端紧跟文本、贴行尾（视觉与原先一致）；
@@ -705,6 +710,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
         <span v-if="detailTodo.projectId" class="tag primary">项目：{{ store.projectMap[detailTodo.projectId]?.name }}</span>
         <span v-if="detailTodo.taskId && store.taskMap[detailTodo.taskId]" class="tag cyan">任务：{{ store.taskMap[detailTodo.taskId]?.name }}</span>
         <span v-if="detailTodo.actionId" class="tag green">已绑定行动（自动同步）</span>
+        <span v-if="actProg(detailTodo) > 0" class="tag">📈 行动进度 {{ actProg(detailTodo) }}%</span>
       </div>
       <label class="field"><span>内容</span><input v-model="detailTodo.text" class="input" placeholder="要做什么？" /></label>
       <label class="field"><span>备注</span><textarea v-model="detailTodo.note" class="textarea" rows="4"></textarea></label>

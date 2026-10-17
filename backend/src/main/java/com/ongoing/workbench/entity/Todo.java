@@ -19,6 +19,7 @@ public class Todo extends OwnedEntity {
     private String projectId;
     private String taskId;
     private String actionId; // 绑定的行动 id（行动在 Todo 侧的投影），无则为纯待办
+    private String fromActionId; // 来源行动：行动进度未满 100% 时自动生成的「续办提醒」（不是投影，不参与双向同步）
     private Integer pomoEstimate = 0;
     private Integer pomoCount = 0;
     @Column(length = 4000)

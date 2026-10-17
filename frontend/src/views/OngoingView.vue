@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useDataStore, projectProgress, today, isRepeat, sortProjectCards, priOrd as _priOrd, checklistItemsOf } from '../stores/data'
+import { useDataStore, projectProgress, today, isRepeat, sortProjectCards, priOrd as _priOrd, checklistItemsOf, progressOf, progressAddOn } from '../stores/data'
 import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
 import Checklist from '../components/Checklist.vue'
@@ -134,9 +134,11 @@ const actDoneNow = (a) => isRepeat(a) ? ((a.doneDates || []).includes(today())) 
 // 番茄数与待办同步：已完成数在 action 侧（finishPomodoro 双写），估算总数只在 todo 侧（后端 Action 无该字段），实时读绑定 todo
 const actTodo = (a) => store.todos.find(t => t.actionId === a.id)
 const actPomoTotal = (a) => (a.pomoEstimate || 0) || (actTodo(a)?.pomoEstimate || 0)
-// 完成率：已完成 = 100%；否则按番茄进度 pomoCount/估算总数（无估算记 0），上限 100%
+// 完成率：已完成 = 100%；否则优先用「进度记录」的累计值，没记过进度才回落到番茄进度（无估算记 0），上限 100%
 const actRate = (a) => {
   if (a.status === 'done') return 100
+  const p = progressOf(a)
+  if (p > 0) return p
   const est = actPomoTotal(a)
   return est > 0 ? Math.min(Math.round(((a.pomoCount || 0) / est) * 100), 100) : 0
 }
@@ -154,6 +156,10 @@ async function saveTask() {
   else await store.create('tasks', taskForm.value)
   showTaskModal.value = false
 }
+/* 打开时记下原本的重复类型：从「重复」改成「不重复」时要顺手清掉重复的生效终止日，
+   否则会留下一个在弹窗里看不见、却让待办变成跨日区间的 endDate。
+   原本就不重复的行动一律不碰它已有的日期字段（可能是在待办侧排好的跨日区间）。 */
+const actionOrigRepeat = ref('')
 function openAction(t = null, taskId = null) {
   // repeat 必须归一为对象：保存时无重复会被置为 null（后端可空 Map），直接 {...t} 会让弹窗 v-model="actionForm.repeat.type" 抛错，表现为"编辑一次后再也点不开"
   // pomoEstimate 兼容存量数据：旧行动侧为 null 而估算存在待办侧，预填合并值，避免原样保存时 null 归零抹掉待办侧估算
@@ -162,11 +168,14 @@ function openAction(t = null, taskId = null) {
     ? { ...t, repeat: t.repeat ? { ...t.repeat, weekdays: [...(t.repeat.weekdays || [])] } : { type: '' }, pomoEstimate: estOf(t) }
     : { taskId, projectId: selectedProject.value?.id, areaId: selectedProject.value?.areaId, priority: 'P3', status: 'todo', repeat: { type: '' }, pomoEstimate: 0 }
   // 新建时不预填 startDate —— 留空 = 不排具体日期，对应 todo 进 todo 列表的「未分配」分组
+  actionOrigRepeat.value = (t && t.repeat && t.repeat.type) || ''
   showActionModal.value = true
 }
 async function saveAction() {
   const f = { ...actionForm.value }
   if (f.repeat && !f.repeat.type) f.repeat = null
+  // 重复 → 不重复：清掉重复规则留下的生效终止日（普通行动不设区间）
+  if (!f.repeat && actionOrigRepeat.value) f.endDate = null
   delete f.repeatDaysText
   if (f.id) await store.updateAction(f.id, f)
   else await store.addAction(f)
@@ -227,6 +236,42 @@ async function submitPomoCalib() {
   if (!a) return
   await store.calibrateActionPomo(a, pomoCalibForm.value)
   showPomoCalib.value = false
+}
+
+/* ---- 行动进度（只有非重复行动才有：每天记一笔，累加到 100%）----
+   累计未满 100% 时，store 会自动在待办「未分配」里留一条续办提醒；
+   满 100% 自动把行动置完成并清掉那条提醒。重复行动靠"按天完成"表达进度，不走这套。 */
+const showProgress = ref(false)
+const progressTarget = ref(null)
+const progressForm = ref({ add: 10, note: '' })
+function openProgress(a) {
+  progressTarget.value = a
+  progressForm.value = { add: 10, note: '' }
+  showProgress.value = true
+}
+const progPct = (a) => progressOf(a)
+const progTodayAdd = (a) => progressAddOn(a, today())
+// 最近几次进度记录（倒序，最多 6 条）
+const progLogRows = computed(() => {
+  const a = progressTarget.value
+  if (!a) return []
+  return Object.entries(a.progressLog || {})
+    .map(([f, v]) => ({
+      f,
+      add: Math.max(0, Math.round(Number(v && typeof v === 'object' ? v.add : v) || 0)),
+      note: v && typeof v === 'object' ? String(v.note || '') : ''
+    }))
+    .filter(r => r.add > 0)
+    .sort((x, y) => y.f.localeCompare(x.f))
+    .slice(0, 6)
+})
+async function submitProgress() {
+  const a = progressTarget.value
+  if (!a) return
+  const add = Math.round(Number(progressForm.value.add) || 0)
+  if (add <= 0) { store.toast('请填写今天推进的进度（1-100）', 'err'); return }
+  showProgress.value = false
+  await store.recordProgress(a, { add, note: progressForm.value.note })
 }
 
 /* ---- 子项（把一条行动拆成若干小步骤）----
@@ -412,6 +457,9 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
                       @click="openCompletion(a)">📝</button>
               <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
               <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
+              <button v-if="!a.repeat?.type" class="btn sm prog-btn" :class="{ on: progPct(a) > 0 }"
+                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击记录今天的完成进度` : '记录今天的完成进度（可累加，满 100% 自动完成）'"
+                      @click="openProgress(a)">📈 {{ progPct(a) ? progPct(a) + '%' : '进度' }}</button>
               <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
                       :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
                       @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
@@ -444,6 +492,9 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
                       @click="openCompletion(a)">📝</button>
               <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
               <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
+              <button v-if="!a.repeat?.type" class="btn sm prog-btn" :class="{ on: progPct(a) > 0 }"
+                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击记录今天的完成进度` : '记录今天的完成进度（可累加，满 100% 自动完成）'"
+                      @click="openProgress(a)">📈 {{ progPct(a) ? progPct(a) + '%' : '进度' }}</button>
               <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
                       :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
                       @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
@@ -574,20 +625,27 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
           </select>
         </label>
       </div>
-      <label class="field"><span>状态</span>
-        <select v-model="actionForm.status" class="select">
-          <option value="todo">待开始</option><option value="doing">进行中</option><option value="done">已完成</option>
-        </select>
-      </label>
       <div class="grid-2">
-        <label class="field"><span>开始日期（将同步到待办，可选）</span><input v-model="actionForm.startDate" type="date" class="input" /></label>
-        <p class="muted" style="font-size:12px;margin-top:-4px">不填 = 不排具体日期，对应待办会出现在 todo 列表的「未分配」分组里。</p>
+        <label class="field"><span>状态</span>
+          <select v-model="actionForm.status" class="select">
+            <option value="todo">待开始</option><option value="doing">进行中</option><option value="done">已完成</option>
+          </select>
+        </label>
         <label class="field"><span>重复</span>
           <select v-model="actionForm.repeat.type" class="select">
             <option value="">不重复</option><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option>
           </select>
         </label>
       </div>
+      <!-- 开始/结束日期只在重复行动里启用：对重复行动它是"生效区间"；
+           普通行动不设区间，具体哪天做去「待办」里排（拖拽或详情里的日期），进度按天累加。 -->
+      <div v-if="actionForm.repeat?.type" class="grid-2">
+        <label class="field"><span>生效开始日期</span><input v-model="actionForm.startDate" type="date" class="input" /></label>
+        <label class="field"><span>生效结束日期（可空 = 一直有效）</span><input v-model="actionForm.endDate" type="date" class="input" :min="actionForm.startDate" /></label>
+      </div>
+      <p v-if="actionForm.repeat?.type" class="muted form-hint">从开始日期起按规则出现，到结束日期为止；不填结束 = 一直有效。</p>
+      <!-- 普通行动不设区间：日期在「待办」里排，进度按天累计（行内 📈 已有入口，这里只给一句说明，避免弹窗过高） -->
+      <p v-else class="muted form-hint">普通行动不设起止日期：哪天做在「待办」里排，进度用行内「📈」按天累计。</p>
       <div v-if="actionForm.repeat?.type === 'weekly'" class="field">
         <span>星期</span>
         <div class="flex">
@@ -638,6 +696,41 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
       <template #foot>
         <button class="btn" @click="showPomoCalib = false">取消</button>
         <button class="btn primary" @click="submitPomoCalib">保存</button>
+      </template>
+    </Modal>
+
+    <!-- 记录行动进度（按天累加；未满 100% → 待办「未分配」自动留一条续办提醒） -->
+    <Modal v-if="showProgress" title="记录进度" @close="showProgress = false">
+      <p class="muted mb-12 truncate">「{{ progressTarget?.name }}」</p>
+      <div class="prog-now">
+        <div class="flex-between mb-8">
+          <span class="muted" style="font-size:12px">当前累计进度</span>
+          <span class="mono" style="font-weight:700">{{ progPct(progressTarget) }}%</span>
+        </div>
+        <ProgressBar :value="progPct(progressTarget)" />
+        <p v-if="progTodayAdd(progressTarget)" class="muted" style="font-size:12px;margin-top:8px">今天已记录 +{{ progTodayAdd(progressTarget) }}%</p>
+      </div>
+      <label class="field"><span>今天推进（%）</span>
+        <input v-model.number="progressForm.add" type="number" min="1" max="100" step="5" class="input" autofocus />
+      </label>
+      <div class="flex gap-4 mb-12" style="flex-wrap:wrap">
+        <button v-for="n in [5, 10, 20, 25, 50]" :key="n" class="btn sm" @click="progressForm.add = n">+{{ n }}%</button>
+      </div>
+      <label class="field"><span>今天做了什么（可选）</span>
+        <textarea v-model="progressForm.note" class="textarea" rows="3" placeholder="一句话记下今天的推进…"></textarea>
+      </label>
+      <p class="muted" style="font-size:12px">进度会累加到行动上；未满 100% 自动在「待办 → 未分配」留一条续办提醒，满 100% 自动完成行动并清掉提醒。</p>
+      <div v-if="progLogRows.length" class="prog-hist">
+        <div class="muted mb-8" style="font-size:12px">最近记录</div>
+        <div v-for="r in progLogRows" :key="r.f" class="prog-log-row">
+          <span class="mono">{{ r.f }}</span>
+          <span class="prog-add">+{{ r.add }}%</span>
+          <span class="muted grow truncate" :title="r.note">{{ r.note || '—' }}</span>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn" @click="showProgress = false">取消</button>
+        <button class="btn primary" @click="submitProgress">记录</button>
       </template>
     </Modal>
 
@@ -703,6 +796,18 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 /* 行尾操作区：桌面端与行动名同排、贴行尾（视觉同重构前）；手机端换行规则见移动端媒体查询 */
 .row-acts { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
 .completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
+/* 表单里紧跟字段的一句说明：比正文小一号、贴紧上方字段（不额外撑高弹窗） */
+.form-hint { font-size: 12px; margin: -4px 0 8px; }
+
+/* 进度按钮：与子项/番茄开关同尺寸，记过进度后点亮 */
+.prog-btn { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+.prog-btn.on { color: var(--primary); border-color: var(--primary-border); background: var(--primary-soft); }
+
+/* 记录进度弹窗 */
+.prog-now { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-bottom: 14px; }
+.prog-hist { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-top: 10px; }
+.prog-log-row { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 3px 0; }
+.prog-add { color: var(--primary); font-weight: 600; min-width: 42px; }
 .pomo-calib { cursor: pointer; border-bottom: 1px dashed transparent; }
 .pomo-calib:hover { color: var(--primary); border-bottom-color: var(--primary); }
 /* 子项开关：与行动行的其它小按钮同尺寸，全部完成时转绿 */
@@ -737,6 +842,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
   .row-acts { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 6px; row-gap: 8px; }
   .act-block + .act-block { border-top: 1px solid var(--border); }
   .act-line .icon-btn { width: 36px; height: 36px; min-width: 36px; font-size: 15px; }
+  .prog-btn { padding: 7px 12px; min-height: 36px; }
   .sub-btn { padding: 7px 12px; min-height: 36px; }
 
   /* 项目详情头部：标题块与操作按钮改为上下堆叠（按钮组自身靠 .flex 的换行继续折行） */

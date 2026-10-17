@@ -34,6 +34,10 @@ public class Action extends OwnedEntity {
     private String completionNote; // 完成情况（与投影 todo 双向同步）
     private Integer pomoCount = 0;
     private Integer pomoEstimate = 0; // 番茄估算总数（与绑定 todo 双向同步）
+    private Integer progress = 0; // 累计完成进度（0-100，按天叠加；仅非重复行动使用）
+    @Convert(converter = JsonMapConverter.class)
+    @Column(length = 4000)
+    private Map<String, Object> progressLog; // 每日进度记录：{ "2026-10-17": { add: 20, note: "..." } }
     private Integer sort = 0;
     private String createdAt;
 }
