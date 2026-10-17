@@ -11,20 +11,37 @@ const showModal = ref(false)
 const form = ref({})
 const editing = ref(null)
 
-/* 排序方式（2026-10-17）：默认仍是「最近添加」，其余三种由用户在下拉里选。
-   - created ：添加时间倒序（原有口径）
-   - start   ：开始日期倒序，近期开始的在前，没填日期的沉底
-   - status  ：按「在看 → 想看 → 暂停 → 放弃 → 完成」分组
-   - progress：进度高到低
-   三种新口径都带 createdAt 倒序兜底，同值条目顺序稳定，不会因为刷新乱跳 */
+/* 排序方式（2026-10-17）：默认仍是「最近添加」，其余三种由用户在下拉里选，方向用旁边的升/降序按钮切。
+   - created ：添加时间（默认降序 = 新→旧）
+   - start   ：开始日期（默认降序 = 近期开始的在前）
+   - status  ：状态分组（默认升序 = 在看 → 想看 → 暂停 → 放弃 → 完成）
+   - progress：进度（默认降序 = 高到低）
+   方向只影响主键；空值（没填日期）永远沉底，副键固定用添加时间倒序兜底，同值条目顺序稳定。
+   切换排序维度时方向回到该维度的默认值，避免「升序」被带到语义相反的维度上 */
 const sortBy = ref('created')
+const sortDir = ref('desc') // desc 降序 / asc 升序
 const STATUS_ORD = { doing: 0, wish: 1, paused: 2, quit: 3, done: 4 }
 const sortOptions = [
-  { v: 'created', l: '最近添加' },
-  { v: 'start', l: '开始时间' },
-  { v: 'status', l: '状态' },
-  { v: 'progress', l: '进度' }
+  { v: 'created', l: '最近添加', def: 'desc' },
+  { v: 'start', l: '开始时间', def: 'desc' },
+  { v: 'status', l: '状态', def: 'asc' },
+  { v: 'progress', l: '进度', def: 'desc' }
 ]
+const sortKeys = {
+  created: m => m.createdAt || '',
+  start: m => m.startDate || '',
+  status: m => STATUS_ORD[m.status] ?? 9,
+  progress: m => m.progress ?? 0
+}
+const isBlank = (v) => v === '' || v === null || v === undefined
+
+function changeSort(v) {
+  sortBy.value = v
+  sortDir.value = sortOptions.find(o => o.v === v)?.def || 'desc'
+}
+function toggleDir() {
+  sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+}
 
 const typeMeta = {
   book: { label: '图书', cls: 'blue', ico: '📖' },
@@ -36,16 +53,19 @@ const typeMeta = {
 
 const list = computed(() => {
   const byNew = (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')
+  const key = sortKeys[sortBy.value] || sortKeys.created
+  const sign = sortDir.value === 'asc' ? 1 : -1
   let l = [...store.medias]
-  if (sortBy.value === 'start') {
-    l.sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '') || byNew(a, b))
-  } else if (sortBy.value === 'status') {
-    l.sort((a, b) => (STATUS_ORD[a.status] ?? 9) - (STATUS_ORD[b.status] ?? 9) || byNew(a, b))
-  } else if (sortBy.value === 'progress') {
-    l.sort((a, b) => (b.progress || 0) - (a.progress || 0) || byNew(a, b))
-  } else {
-    l.sort(byNew)
-  }
+  l.sort((a, b) => {
+    const ka = key(a), kb = key(b)
+    const ea = isBlank(ka), eb = isBlank(kb)
+    // 空值不参与方向翻转，一律沉底
+    if (ea || eb) return ea && eb ? byNew(a, b) : (ea ? 1 : -1)
+    const cmp = typeof ka === 'number' && typeof kb === 'number'
+      ? ka - kb
+      : String(ka).localeCompare(String(kb))
+    return cmp * sign || byNew(a, b)
+  })
   if (tab.value !== 'all') l = l.filter(m => m.type === tab.value)
   return l
 })
@@ -114,9 +134,12 @@ async function setStatus(m, s) {
       </div>
       <div class="sort-wrap">
         <span class="sort-label">排序</span>
-        <select v-model="sortBy" class="select sort-select" aria-label="排序方式">
+        <select class="select sort-select" :value="sortBy" aria-label="排序方式" @change="changeSort($event.target.value)">
           <option v-for="o in sortOptions" :key="o.v" :value="o.v">{{ o.l }}</option>
         </select>
+        <button class="sort-dir" :class="{ asc: sortDir === 'asc' }" :aria-label="sortDir === 'asc' ? '当前升序，点击切换为降序' : '当前降序，点击切换为升序'" @click="toggleDir">
+          <span class="sort-arrow">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>{{ sortDir === 'asc' ? '升序' : '降序' }}
+        </button>
       </div>
     </div>
 
@@ -197,6 +220,12 @@ async function setStatus(m, s) {
 .sort-label { font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .sort-select { width: auto; min-width: 112px; padding-top: 6px; padding-bottom: 6px; border-radius: 999px; }
 
+/* 升降序开关：与下拉同一行，胶囊造型对齐；文字直接写明当前方向，不靠图标猜 */
+.sort-dir { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 7px 12px; font-size: 12.5px; font-family: inherit; color: var(--text-2); cursor: pointer; white-space: nowrap; transition: all .13s; }
+.sort-dir:hover { border-color: var(--primary-border); color: var(--primary); }
+.sort-dir:focus-visible { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.sort-arrow { font-size: 13px; font-weight: 700; line-height: 1; }
+
 .media-card { display: flex; flex-direction: column; transition: all .18s; }
 .media-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
 .star-line { color: var(--yellow); font-size: 12px; font-weight: 600; }
@@ -217,9 +246,10 @@ async function setStatus(m, s) {
   /* 类型筛选 chip：加大点击热区，横向铺满时更整齐 */
   .chip { padding: 10px 16px; font-size: 13px; }
 
-  /* 排序下拉：单独一行铺满，触屏更好点 */
+  /* 排序下拉 + 升降序：独立一行，下拉占满剩余宽度，按钮保持可点尺寸 */
   .sort-wrap { width: 100%; margin-left: 0; }
   .sort-select { flex: 1; min-width: 0; min-height: 40px; }
+  .sort-dir { min-height: 40px; padding: 0 14px; font-size: 13px; }
 
   /* 状态小按钮（想/在看/完成/暂停/放弃）：触屏上加高，避免误触相邻项 */
   .mini-btn { padding: 7px 13px; font-size: 12px; min-height: 36px; }
