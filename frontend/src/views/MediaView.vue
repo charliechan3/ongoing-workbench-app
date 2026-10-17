@@ -92,6 +92,8 @@ function openEdit(m) {
 }
 async function save() {
   const f = { ...form.value }
+  // 完成即 100%：弹窗里把状态改成「已完成」时进度自动补满，免得出现「已完成 40%」的自相矛盾
+  if (f.status === 'done') f.progress = 100
   if (editing.value) await store.update('medias', editing.value.id, f)
   else await store.create('medias', f)
   showModal.value = false
@@ -102,6 +104,8 @@ async function del(m) {
 }
 async function setStatus(m, s) {
   const patch = { status: s }
+  // 标成完成 → 进度直接填满；反过来取消完成不动进度，避免把用户手动填的值冲掉
+  if (s === 'done') patch.progress = 100
   if (s === 'done' && !m.endDate) patch.endDate = today()
   if (s !== 'done') patch.endDate = null
   await store.update('medias', m.id, patch, { silent: true })
