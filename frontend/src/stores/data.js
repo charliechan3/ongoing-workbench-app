@@ -4,6 +4,23 @@ import { api } from '../api'
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 // 番茄钟会话的 localStorage 持久化键（跨刷新恢复进行中的专注）
 const POMO_KEY = 'ongoing.pomoSession'
+// 已经确认落到服务端的会话 id（刷新后靠它区分「本端刚发起还没推上去」和「这本就是服务端的会话」）
+const POMO_SYNCED_KEY = 'ongoing.pomoSyncedSid'
+// 到点后超过 2 小时仍未结算的会话视为脏数据（与服务端 / 前端恢复口径一致）
+const POMO_STALE_MS = 2 * 3600 * 1000
+
+/* ============ 多端番茄钟同步（2026-10-17）============
+   会话的唯一真相放在服务端（每个账号一条），本地只负责「即时反馈 + 离线兜底」：
+   - 开始/取消/结算都先改本地（UI 立刻响应），再异步推到服务端；
+   - 服务端时间戳换算成本地时钟口径（pomoSync.offset），手机与电脑时钟有偏差时倒计时也一致；
+   - 结算走服务端原子认领（claimed），多端同时到点也只有一端记账，不会凭空多出番茄。
+   以下两个模块级变量刻意不放进 state：它们是执行期状态，不需要响应式，也避免被 devtools 干扰。 */
+let pomoBusy = 0                     // 进行中的服务端写请求数：>0 时对账跳过，避免「刚结束又被拉回来」
+let pomoQueue = Promise.resolve()    // 写请求串行化：start / cancel 不排队会乱序，在服务端留下幽灵会话
+
+// 游客和未登录不同步：游客的写请求本来就被本地模拟掉，会话也不该落库
+const pomoSyncOn = () => !isGuest() && !!localStorage.getItem('ongoing.token')
+
 // 本地时区日期，避免 toISOString(UTC) 在凌晨取错"今天"
 export const fmtDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 export const today = () => fmtDate(new Date())
@@ -269,9 +286,12 @@ export const useDataStore = defineStore('data', {
     todos: [], pomodoros: [], worklogs: [], notes: [], medias: [],
     checklist: [],
     settings: {},    toasts: [],    // 首页番茄钟会话。放在 store 是为了跨页面保持（组件卸载不影响倒计时）。
-    // endAt = 结束时间戳(ms)；倒计时始终由 endAt - Date.now() 推导，不靠累加计数。
+    // endAt = 结束时间戳(ms，本地时钟口径)；倒计时始终由 endAt - Date.now() 推导，不靠累加计数。
+    // sid = 本次会话标识，多端同步时用来判断「同一颗番茄」还是「另一端新开的一颗」。
     // 会话额外持久化到 localStorage（POMO_KEY），刷新页面后由 restorePomoSession() 恢复。
-    pomoSession: { endAt: null, minutes: 25, todoId: '' }
+    pomoSession: { endAt: null, minutes: 25, todoId: '', sid: '' },
+    // 多端同步运行态（不持久化）：offset = 服务器时钟 - 本地时钟；syncedSid = 已确认写到服务端的会话
+    pomoSync: { offset: 0, syncedSid: '', lastPullAt: 0 }
   }),
 
   getters: {
@@ -407,7 +427,9 @@ export const useDataStore = defineStore('data', {
       this.checklist = []
       this.settings = {}
       this.toasts = []
-      this.stopPomoSession()
+      // 只清本地：此时 token 可能已经换成新账号，发 DELETE 会误删新账号正在跑的会话
+      this.stopPomoSession({ remote: false })
+      this.pomoSync = { offset: 0, syncedSid: '', lastPullAt: 0 }
     },
 
     /* ---- 通用 CRUD 包装 ---- */
@@ -1069,28 +1091,58 @@ export const useDataStore = defineStore('data', {
       this.toast(`已批量创建 ${dates.length} 条`)
     },
 
-    // 首页番茄钟会话（跨页面保持 + 刷新恢复）
+    /* ===== 番茄钟会话（首页 / 待办页共用；多端同步）=====
+       本地先改（UI 即时响应），服务端异步跟上；两端对账由 pullPomoSession 完成。 */
     startPomoSession({ minutes, todoId } = {}) {
       const m = Number(minutes) > 0 ? Math.round(minutes) : this.pomoMinutes
-      this.pomoSession = { endAt: Date.now() + m * 60000, minutes: m, todoId: todoId || '' }
-      try { localStorage.setItem(POMO_KEY, JSON.stringify(this.pomoSession)) } catch {}
-    },
-    stopPomoSession() {
-      this.pomoSession = { endAt: null, minutes: this.pomoMinutes, todoId: '' }
-      try { localStorage.removeItem(POMO_KEY) } catch {}
+      const sid = uid()
+      this.pomoSession = { endAt: Date.now() + m * 60000, minutes: m, todoId: todoId || '', sid }
+      this._writePomoLocal()
+      this._forgetPomoSynced() // 新会话还没推上去
+      this._pushPomoSession({ minutes: m, todoId: todoId || '', sid })
     },
 
-    // 结束当前番茄钟会话（到点或手动）：记录 + 若绑定待办则同步累计，并清理持久化。
-    // 统一入口 —— 首页 / 待办页 / 刷新后补记都走这里，保证记录口径一致
-    // （待办被删时降级为自由专注，而不是整颗丢弃）。
-    // 落库字段用后端的契约：targetType/targetId = 绑定目标，title = 任务名快照
-    // （曾用 text/todoId/actionId，后端实体没这些字段会被静默丢弃，导致统计页认不出任务）
+    // 取消当前会话（不记账）：本地立即清空，服务端按 sid 删除
+    // （sid 不匹配说明另一端已换成新会话，不动它）
+    stopPomoSession({ remote = true } = {}) {
+      const sid = this.pomoSession.sid
+      this._clearPomoLocal()
+      if (!remote || !sid || !pomoSyncOn()) return
+      pomoBusy++
+      this._pomoQueue(async () => {
+        try { await api.pomo.cancel(sid) } catch {}
+        finally { pomoBusy-- }
+      })
+    },
+
+    /* 结束当前番茄钟会话（到点或手动）：记录 + 若绑定待办则同步累计，并清理持久化。
+       统一入口 —— 首页 / 待办页 / 刷新后补记都走这里，保证记录口径一致
+       （待办被删时降级为自由专注，而不是整颗丢弃）。
+       落库字段用后端的契约：targetType/targetId = 绑定目标，title = 任务名快照
+       （曾用 text/todoId/actionId，后端实体没这些字段会被静默丢弃，导致统计页认不出任务）。
+       多端同到点：先向服务端「认领」这一颗，删到会话的那一端记账，其余端直接返回。 */
     async finishPomoSession() {
       const s = this.pomoSession
       if (!s.endAt) return
       const minutes = s.minutes || this.pomoMinutes
       let todoId = s.todoId || ''
-      this.stopPomoSession() // 先清状态，避免重复触发
+      const synced = !!s.sid && this.pomoSync.syncedSid === s.sid
+      this._clearPomoLocal() // 先清状态，避免重复触发
+      let claimed = true
+      if (synced && pomoSyncOn()) {
+        pomoBusy++
+        try {
+          const r = await api.pomo.finish(s.sid)
+          claimed = !!r?.claimed
+        } catch (e) {
+          claimed = true // 服务端不可达：本端兜底记账，宁可多记一颗也不丢已完成的专注
+        } finally { pomoBusy-- }
+      }
+      if (!claimed) {
+        this.toast('这一颗已在其他设备记录 🍅')
+        this._refreshPomoStats() // 那边写进了记录：本端补拉一次，首页今日番茄数立刻对齐
+        return
+      }
       let ref = {}
       if (todoId) {
         const t = this.todos.find(x => x.id === todoId)
@@ -1101,20 +1153,131 @@ export const useDataStore = defineStore('data', {
       this.toast(todoId ? `完成 1 个番茄钟（${minutes} 分钟），已计入所选待办 🍅` : `完成 1 个番茄钟（${minutes} 分钟），已记录 🍅`)
     },
 
-    // 应用启动时恢复刷新前的会话（由 App.vue 在 loadAll 之后调用，
-    // 保证查待办时 todos 已就绪）。过期超过 2 小时的会话直接丢弃，避免隔天补记出脏数据。
+    /* 应用启动时恢复刷新前的会话（由 App.vue 在 loadAll 之后调用，
+       保证查待办时 todos 已就绪）。过期超过 2 小时的会话直接丢弃，避免隔天补记出脏数据。
+       恢复后立刻与服务端对账：另一端可能在这期间已经把这颗结算或取消了。 */
     restorePomoSession() {
       try {
         const raw = localStorage.getItem(POMO_KEY)
         if (!raw) return
         const s = JSON.parse(raw)
-        localStorage.removeItem(POMO_KEY)
-        if (!s || !s.endAt || !(s.minutes > 0)) return
-        if (Date.now() - s.endAt > 2 * 3600 * 1000) return
-        this.pomoSession = { endAt: s.endAt, minutes: s.minutes, todoId: s.todoId || '' }
-        localStorage.setItem(POMO_KEY, JSON.stringify(this.pomoSession))
-        if (Date.now() >= s.endAt) this.finishPomoSession() // 刷新期间到点 → 补记这一颗
+        if (!s || !s.endAt || !(s.minutes > 0)) { localStorage.removeItem(POMO_KEY); return }
+        if (Date.now() - s.endAt > POMO_STALE_MS) { localStorage.removeItem(POMO_KEY); return }
+        this.pomoSession = { endAt: s.endAt, minutes: s.minutes, todoId: s.todoId || '', sid: s.sid || uid() }
+        try { this.pomoSync.syncedSid = localStorage.getItem(POMO_SYNCED_KEY) || '' } catch {}
+        this._writePomoLocal()
+        this.pullPomoSession({ force: true }).catch(() => {})
       } catch { try { localStorage.removeItem(POMO_KEY) } catch {} }
+    },
+
+    /* 多端对账：拉服务端会话并同步到本地（App.vue 每 15 秒调一次，页面重新可见时也调）。
+       - 服务端有、本地没有 → 采用（另一端刚开始的番茄，本端立刻出现倒计时）
+       - 服务端已没有、本地有且之前确实同步过 → 另一端结束/取消了 → 本地跟随清除
+       - 拉取失败 → 什么都不做（网络问题不能当成"会话不存在"，否则会误清本地计时） */
+    async pullPomoSession({ force = false } = {}) {
+      if (!pomoSyncOn() || pomoBusy > 0) return
+      const t = Date.now()
+      if (!force && t - this.pomoSync.lastPullAt < 5000) return
+      this.pomoSync.lastPullAt = t
+      let r
+      try { r = await api.pomo.get() } catch (e) { return }
+      if (!r || typeof r !== 'object') return
+      if (r.serverNow) this.pomoSync.offset = r.serverNow - Date.now()
+      const remote = r.session || null
+      const local = this.pomoSession
+
+      if (remote && remote.endAt) {
+        if (local.endAt && local.sid && local.sid === remote.sid) {
+          this._markPomoSynced(local.sid)
+          return
+        }
+        // 本端刚发起、推送还没落地：以本地为准并补推一次，别被另一台设备的旧会话盖掉
+        if (local.endAt && local.sid && this.pomoSync.syncedSid !== local.sid) {
+          this._pushPomoSession({ minutes: local.minutes, todoId: local.todoId, sid: local.sid })
+          return
+        }
+        // 采用服务端会话（剩余时长按服务端时钟换算，两端显示一致）
+        this.pomoSession = {
+          endAt: this._pomoLocalEndAt(remote.endAt),
+          minutes: Number(remote.minutes) > 0 ? remote.minutes : this.pomoMinutes,
+          todoId: remote.todoId || '',
+          sid: remote.sid || ''
+        }
+        this._markPomoSynced(this.pomoSession.sid)
+        this._writePomoLocal()
+        return
+      }
+
+      // 服务端没有进行中的会话
+      if (!local.endAt) return
+      if (this.pomoSync.syncedSid === local.sid) {
+        this._clearPomoLocal() // 另一端已结束/取消
+        this._refreshPomoStats() // 另一端可能刚记了一颗：补拉番茄记录与待办累计
+        return
+      }
+      // 本地这颗从没推成功过：到点就地结算，没到点补推
+      if (Date.now() >= local.endAt) this.finishPomoSession()
+      else this._pushPomoSession({ minutes: local.minutes, todoId: local.todoId, sid: local.sid })
+    },
+
+    // 把会话写到服务端（串行执行；失败留给下一轮对账补推）
+    _pushPomoSession({ minutes, todoId, sid }) {
+      if (!pomoSyncOn()) return
+      pomoBusy++
+      this._pomoQueue(async () => {
+        try {
+          const r = await api.pomo.start({ minutes, todoId, sid })
+          if (r?.serverNow) this.pomoSync.offset = r.serverNow - Date.now()
+          if (r?.session?.endAt && this.pomoSession.sid === sid) {
+            // 用服务端结束时间校正本端剩余时长（两端时钟可能不一致）
+            this.pomoSession = { ...this.pomoSession, endAt: this._pomoLocalEndAt(r.session.endAt) }
+            this._writePomoLocal()
+          }
+          this._markPomoSynced(sid)
+        } catch (e) {
+          /* 网络异常：保留本地会话，下一轮对账补推 */
+        } finally { pomoBusy-- }
+      })
+    },
+
+    _pomoQueue(fn) {
+      pomoQueue = pomoQueue.then(fn).catch(() => {})
+      return pomoQueue
+    },
+    // 另一端结算后补拉一次（番茄记录 + 待办/行动的累计颗数），别让本端的数字落后到下次刷新。
+    // 待办只回填 pomoCount 而不整体替换：整体替换会让正在编辑的对象变成旧引用，保存时覆盖掉新数据。
+    async _refreshPomoStats() {
+      try {
+        const [poms, todos] = await Promise.all([api.pomodoros.list(), api.todos.list()])
+        this.pomodoros = poms || []
+        for (const p of this.pomodoros) if (p.minutes == null) p.minutes = p.duration || 25
+        for (const t of (todos || [])) {
+          const cur = this.todos.find(x => x.id === t.id)
+          if (cur) cur.pomoCount = t.pomoCount
+        }
+      } catch (e) { /* 网络异常保持现状，下一轮对账再试 */ }
+    },
+    _pomoLocalEndAt(serverEndAt) {
+      return Number(serverEndAt) - (this.pomoSync.offset || 0)
+    },
+    _writePomoLocal() {
+      try { localStorage.setItem(POMO_KEY, JSON.stringify(this.pomoSession)) } catch {}
+    },
+    _markPomoSynced(sid) {
+      this.pomoSync.syncedSid = sid || ''
+      try {
+        if (sid) localStorage.setItem(POMO_SYNCED_KEY, sid)
+        else localStorage.removeItem(POMO_SYNCED_KEY)
+      } catch {}
+    },
+    _forgetPomoSynced() {
+      this._markPomoSynced('')
+    },
+    // 只清本地、不碰服务端（切号/退出登录用，避免误删另一个账号正在跑的会话）
+    _clearPomoLocal() {
+      this.pomoSession = { endAt: null, minutes: this.pomoMinutes, todoId: '', sid: '' }
+      try { localStorage.removeItem(POMO_KEY) } catch {}
+      this._forgetPomoSynced()
     },
 
     // 完成番茄钟 → 记录 + 若绑定待办/行动则同步累计 pomoCount

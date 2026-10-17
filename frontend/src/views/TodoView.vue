@@ -407,7 +407,7 @@ function stopTodoTimer() {
 // 会话变化时同步本地计时。用 watch 而非只在 onMounted 查一次：
 // 应用启动后 store 会从 localStorage 恢复刷新前的会话，那发生在本组件挂载之后。
 watch(() => store.pomoSession.endAt, (endAt) => {
-  if (!endAt) return
+  if (!endAt) { stopTick(); return } // 另一端取消/结算了 → 本端停止空转的计时器
   if (Date.now() >= endAt) finishTodoTimer() // 已过期 → 补记这一颗番茄
   else startTick()
 }, { immediate: true })

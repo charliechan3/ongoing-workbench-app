@@ -27,7 +27,7 @@ const navs = [
 onMounted(async () => {
   const ok = await auth.init()
   if (ok) {
-    store.loadAll().then(() => store.restorePomoSession())
+    store.loadAll().then(() => { store.restorePomoSession(); startPomoPull() })
   } else if (!isAuthPage.value) {
     router.replace({ name: 'login' })
   }
@@ -42,6 +42,8 @@ watch(() => auth.token, async (t) => {
   store.resetAll()
   await store.loadAll()
   store.restorePomoSession()
+  startPomoPull() // 登录 / 切号后开始对账（幂等，已启动则直接返回）
+  pullPomo()
 })
 
 const today = () => {
@@ -91,6 +93,35 @@ watch(
 )
 onBeforeUnmount(stopTitleTick)
 
+/* ===== 番茄钟会话多端同步 =====
+   另一台设备（手机 / 电脑）开始、取消、结束时，本端要跟上：
+   - 定时对账（15s），页面不可见时跳过（省电，后台标签页反正也看不到倒计时）；
+   - 重新可见 / 窗口聚焦时立刻补一次，切回来就看到最新状态。
+   游客与未登录由 store 内部跳过，不会产生请求。 */
+const POMO_PULL_MS = 15000
+let pomoPullTimer = null
+
+function pullPomo() {
+  if (document.visibilityState === 'hidden') return
+  store.pullPomoSession().catch(() => {})
+}
+function startPomoPull() {
+  if (pomoPullTimer) return
+  pullPomo()
+  pomoPullTimer = setInterval(pullPomo, POMO_PULL_MS)
+  document.addEventListener('visibilitychange', onPomoVisible)
+  window.addEventListener('focus', pullPomo)
+}
+function onPomoVisible() {
+  if (document.visibilityState === 'visible') pullPomo()
+}
+function stopPomoPull() {
+  if (pomoPullTimer) { clearInterval(pomoPullTimer); pomoPullTimer = null }
+  document.removeEventListener('visibilitychange', onPomoVisible)
+  window.removeEventListener('focus', pullPomo)
+}
+onBeforeUnmount(stopPomoPull)
+
 // 全局快捷键：Ctrl/Cmd+K 打开搜索面板
 const onKey = (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); cmdOpen.value = !cmdOpen.value }
@@ -112,7 +143,8 @@ const quickItems = computed(() => {
 const displayName = computed(() => auth.displayName || '未登录')
 
 function onLogout() {
-  store.resetAll()          // 清空内存数据 & 停止番茄会话
+  store.resetAll()          // 清空内存数据 & 停止番茄会话（不碰服务端，避免误删别的账号的会话）
+  stopPomoPull()
   store.toast(auth.isGuest ? '已退出游客模式' : '已退出登录')
   auth.logout()
   router.replace({ name: 'login' })

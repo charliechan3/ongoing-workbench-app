@@ -85,6 +85,13 @@ export const api = {
     get: () => http.get('/settings').then(r => r.data),
     update: (data) => http.put('/settings', data).then(r => r.data)
   },
+  // 进行中的番茄钟会话（多端同步）：开始 / 取消 / 结算认领
+  pomo: {
+    get: () => http.get('/pomo-session').then(r => r.data),
+    start: (data) => http.put('/pomo-session', data).then(r => r.data),
+    cancel: (sid) => http.delete('/pomo-session', { params: { sid } }).then(r => r.data),
+    finish: (sid) => http.post('/pomo-session/finish', { sid }).then(r => r.data)
+  },
   backup: {
     export: () => http.get('/backup/export').then(r => r.data),
     exportMarkdown: () => http.get('/backup/export/markdown').then(r => r.data),
