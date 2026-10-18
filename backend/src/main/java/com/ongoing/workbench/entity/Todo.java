@@ -21,6 +21,7 @@ public class Todo extends OwnedEntity {
     private String actionId; // 绑定的行动 id（行动在 Todo 侧的投影），无则为纯待办
     private String fromActionId; // 来源行动：行动进度未满 100% 时自动生成的「续办提醒」（不是投影，不参与双向同步）
     private String fromTodoId; // 来源待办：纯待办进度未满 100% 时自动生成的「续办提醒」（同上，不参与双向同步）
+    private String carryDate; // 续办提醒对应的推进日期（YYYY-MM-DD）：跨天推进时删旧建新，保证未分配始终留最新一天的一条
     private Integer pomoEstimate = 0;
     private Integer pomoCount = 0;
     private Integer progress = 0; // 纯待办自己的累计进度（0-100）；绑定行动时以行动为准，这里不写

@@ -6,6 +6,7 @@ import Modal from '../components/Modal.vue'
 import Checklist from '../components/Checklist.vue'
 import ProgressBar from '../components/ProgressBar.vue'
 import ProgressModal from '../components/ProgressModal.vue'
+import StatPill from '../components/StatPill.vue'
 
 const store = useDataStore()
 const view = ref('list') // list | calendar
@@ -84,15 +85,26 @@ const actSrc = (todo) => actOf(todo) || (todo && todo.fromActionId ? actMap.valu
 const todoMap = computed(() => Object.fromEntries(store.todos.map(t => [t.id, t])))
 const carryTodoOf = (todo) => (todo && todo.fromTodoId ? todoMap.value[todo.fromTodoId] || null : null)
 /* 一条待办的进度：
-   - 投影待办 / 行动续办提醒 → 看它背后的行动（行动已完成记 100%）
-   - 纯待办的续办提醒 → 看源待办（完成记 100%）
-   - 纯待办 → 看自己的 progress（在「待办」里直接记） */
+   - 投影待办 / 行动续办提醒 → 看它背后的行动
+   - 纯待办的续办提醒 → 看源待办（共享同一份进度百分比）
+   - 纯待办 → 看自己的 progress（在「待办」里直接记）
+   进度只看 progress 字段本身，不因「勾选完成」就硬抬到 100%——
+   勾完成只表示今天做了这一轮，真正的百分比仍由 progress 决定。 */
 const todoProg = (todo) => {
   const act = actSrc(todo)
-  if (act) return act.status === 'done' ? 100 : progressOf(act)
+  if (act) return progressOf(act)
   const src = carryTodoOf(todo)
-  if (src) return src.status === 'done' ? 100 : todoProgressOf(src)
+  if (src) return todoProgressOf(src)
   return todoProgressOf(todo)
+}
+/* 完成情况与进度同源：只存一份，跟着进度的归属走——
+   投影待办 / 行动续办提醒 → 行动上的那段话；纯待办的续办提醒 → 源待办；纯待办 → 自己 */
+const todoNote = (todo) => {
+  const act = actSrc(todo)
+  if (act) return act.completionNote || ''
+  const src = carryTodoOf(todo)
+  if (src) return src.completionNote || ''
+  return (todo && todo.completionNote) || ''
 }
 // 记录进度弹窗：传待办本身，绑定了行动的在弹窗里自动转给行动（与「进行中」同一套口径：填最终值）
 const showProg = ref(false)
@@ -687,12 +699,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
                 <span v-if="rowRepeatLabel(r.todo)" class="tag cyan xs">↻ {{ rowRepeatLabel(r.todo) }}</span>
                 <span v-if="r.todo.actionId" class="tag green xs">行动</span>
                 <!-- 行动进度未满 100% 时自动生成的续办提醒（自动维护，不参与行动双向同步） -->
-                <span v-if="r.todo.fromActionId || r.todo.fromTodoId" class="tag xs" title="由进度自动生成：满 100% 后自动清理">续办</span>
-                <!-- 进度：点一下就能记"今天推进了多少"。绑定行动的记到行动上，纯待办记在自己身上；
-                     重复待办按天勾完成，没有累计进度这回事，所以不显示 -->
-                <span v-if="!r.repeat" class="tag xs prog-tag" :class="{ on: todoProg(r.todo) > 0 }"
-                      :title="todoProg(r.todo) > 0 ? `当前推进 ${todoProg(r.todo)}%，点击设置最新进度` : '点击设置当前累计进度'"
-                      @click.stop="openTodoProgress(r.todo)">📈 {{ todoProg(r.todo) > 0 ? todoProg(r.todo) + '%' : '进度' }}</span>
+                <span v-if="r.todo.fromActionId || r.todo.fromTodoId" class="tag xs" title="由进度自动生成：每天未满 100% 补一条，满 100% 停止新增（不自动清理）">续办</span>
               </div>
             </div>
             <!-- 操作区独立成组：桌面端紧跟文本、贴行尾（视觉与原先一致）；
@@ -706,9 +713,10 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
                       :title="ckTotal(r.todo) ? `子项 ${ckDone(r.todo)}/${ckTotal(r.todo)}（点击展开/收起）` : '把这条待办拆成多个子项'"
                       @click="toggleChecklist(r.todo)">☑<span v-if="ckTotal(r.todo)"> {{ ckDone(r.todo) }}/{{ ckTotal(r.todo) }}</span></button>
               <span class="tag" :class="priCls(r.todo.priority)">{{ r.todo.priority }}</span>
-              <button class="icon-btn completion-btn" :class="{ on: r.todo.completionNote }"
-                      :title="r.todo.completionNote ? '完成情况：' + r.todo.completionNote + '（点击编辑）' : '填写完成情况'"
-                      @click="openCompletion(r.todo)">📝</button>
+              <!-- 进度 + 完成情况是同一份内容（同一段话也记在进度里），所以整颗胶囊只有一个入口：
+                   非重复 → 记录进度（其中就包含完成情况）；重复条目没有累计进度 → 直接填完成情况 -->
+              <StatPill :show-progress="!r.repeat" :pct="todoProg(r.todo)" :note="todoNote(r.todo)"
+                        @open="r.repeat ? openCompletion(r.todo) : openTodoProgress(r.todo)" />
               <button v-if="!r.todo.actionId && !r.todo.fromActionId && !r.todo.fromTodoId" class="icon-btn act-upgrade" title="升级" @click="convertTarget = r.todo; showConvert = true">↗</button>
               <button class="icon-btn" title="详情" @click="openDetail(r.todo)">⋯</button>
               <button class="icon-btn" title="删除" @click="delTodo(r.todo)">✕</button>
@@ -769,7 +777,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
             <div v-for="c in calShown(d)" :key="c.f + '-' + c.todo.id" class="cal-todo"
                  :class="{ done: c.done, dragging: drag && drag.id === c.todo.id }"
                  :draggable="!c.repeat"
-                 :title="(c.repeat ? '重复行动（按规则出现，不可拖拽）。' + (c.done ? '已完成（' + c.f + '），点击取消' : '未完成，点击完成当天') + (c.f > today() ? '（未来日期不可提前完成）' : '') : c.todo.text + (c.todo.completionNote ? '\n完成情况：' + c.todo.completionNote : '') + '（可拖拽到其他日期）')"
+                 :title="(c.repeat ? '重复行动（按规则出现，不可拖拽）。' + (c.done ? '已完成（' + c.f + '），点击取消' : '未完成，点击完成当天') + (c.f > today() ? '（未来日期不可提前完成）' : '') : c.todo.text + (todoNote(c.todo) ? '\n完成情况：' + todoNote(c.todo) : '') + '（可拖拽到其他日期）')"
                  @dragstart="!c.repeat && dragStart(c.todo, $event)" @dragend="dragEnd"
                  @click.stop="clickCalCell(c)">{{ c.repeat ? '↻ ' : '' }}{{ c.todo.text }}</div>
               <div v-if="d.todos.length > 3" class="cal-more" @click.stop="toggleDayExpand(d.f)"
@@ -896,7 +904,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
       <template #foot><button class="btn" @click="showShelved = false">关闭</button></template>
     </Modal>
 
-    <!-- 记录行动进度（与「进行中」行动行同一个弹窗：填最终累计值、满 100% 自动完成行动并清掉续办提醒） -->
+    <!-- 记录行动进度（与「进行中」行动行同一个弹窗：填最终累计值、满 100% 停止新增续办，不自动完成） -->
     <ProgressModal v-if="showProg" :todo="progTarget" @close="showProg = false" />
 
     <!-- 拖拽改期弹窗（拖到底部"其他日期"区域触发） -->
@@ -972,7 +980,6 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 .tag.prog-tag:hover { color: #fff; background: var(--primary); border-color: var(--primary); }
 /* 详情弹窗里的行动进度块 */
 .prog-detail { background: var(--surface-2); border-radius: 10px; padding: 12px; margin-bottom: 14px; }
-.completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
 
 /* 搁置区入口：列表第一行（通常是「未分配」）右侧的灰胶囊；空列表与日历视图用 .shelf-bar 单独占一行右侧 */
 .group-head .shelve-chip { margin-left: auto; align-self: center; }

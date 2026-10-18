@@ -7,6 +7,7 @@ import Checklist from '../components/Checklist.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import ProgressBar from '../components/ProgressBar.vue'
 import ProgressModal from '../components/ProgressModal.vue'
+import StatPill from '../components/StatPill.vue'
 
 const store = useDataStore()
 const tab = ref('projects') // projects | notes
@@ -242,17 +243,17 @@ async function submitPomoCalib() {
   showPomoCalib.value = false
 }
 
-/* ---- 行动进度（只有非重复行动才有：填的是最终累计进度，满 100% 算完成）----
+/* ---- 行动进度（只有非重复行动才有：填的是最终累计进度）----
    累计未满 100% 时，store 会自动在待办「未分配」里留一条续办提醒；
-   满 100% 自动把行动置完成并清掉那条提醒。重复行动靠"按天完成"表达进度，不走这套。 */
+   进度到 100% 只停止新增续办，不自动置完成、不清掉已有提醒（完成状态由用户手动勾选）。重复行动靠"按天完成"表达进度，不走这套。 */
 const showProgress = ref(false)
 const progressTarget = ref(null)
 function openProgress(a) {
   progressTarget.value = a
   showProgress.value = true
 }
-// 已完成记 100%（与「待办」侧口径一致）；往下改会重新打开这条行动
-const progPct = (a) => (a && a.status === 'done' ? 100 : progressOf(a))
+// 进度只看 progress 字段本身，不因「勾选完成」硬抬到 100%（与「待办」侧续办提醒口径一致）
+const progPct = (a) => progressOf(a)
 
 /* ---- 子项（把一条行动拆成若干小步骤）----
    子项只有名字/完成状态/排序，交互全在 Checklist 组件里；这里只管"这条行动是否展开子列表"。
@@ -434,14 +435,12 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
               <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
               <!-- 搁置：从待办里收起来了，但行动本身仍留在项目里；在待办页「搁置区」选日期放回来 -->
               <span v-if="a.shelved" class="tag gray" title="已从待办里搁置（行动仍在项目里），可在待办的「搁置区」放回来">已搁置</span>
-              <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
-                      :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
-                      @click="openCompletion(a)">📝</button>
+              <!-- 进度 + 完成情况是同一份内容，所以整颗胶囊只有一个入口：
+                   非重复行动 → 记录进度（里面就是完成情况）；重复行动没有累计进度 → 直接填完成情况 -->
+              <StatPill :show-progress="!a.repeat?.type" :pct="progPct(a)" :note="a.completionNote || ''"
+                        @open="a.repeat?.type ? openCompletion(a) : openProgress(a)" />
               <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
               <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
-              <button v-if="!a.repeat?.type" class="btn sm prog-btn" :class="{ on: progPct(a) > 0 }"
-                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击设置最新进度` : '设置当前累计进度（满 100% 自动完成）'"
-                      @click="openProgress(a)">📈 {{ progPct(a) ? progPct(a) + '%' : '进度' }}</button>
               <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
                       :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
                       @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
@@ -471,14 +470,12 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
               <span class="tag" :class="priCls(a.priority)">{{ a.priority || 'P3' }}</span>
               <!-- 搁置：从待办里收起来了，但行动本身仍留在项目里；在待办页「搁置区」选日期放回来 -->
               <span v-if="a.shelved" class="tag gray" title="已从待办里搁置（行动仍在项目里），可在待办的「搁置区」放回来">已搁置</span>
-              <button class="icon-btn completion-btn" :class="{ on: a.completionNote }"
-                      :title="a.completionNote ? '完成情况：' + a.completionNote + '（点击编辑）' : '填写完成情况'"
-                      @click="openCompletion(a)">📝</button>
+              <!-- 进度 + 完成情况是同一份内容，所以整颗胶囊只有一个入口：
+                   非重复行动 → 记录进度（里面就是完成情况）；重复行动没有累计进度 → 直接填完成情况 -->
+              <StatPill :show-progress="!a.repeat?.type" :pct="progPct(a)" :note="a.completionNote || ''"
+                        @open="a.repeat?.type ? openCompletion(a) : openProgress(a)" />
               <span v-if="a.repeat?.type" class="tag cyan">↻ {{ a.repeat.type === 'daily' ? '每日' : a.repeat.type === 'weekly' ? '每周' : '每月' }}</span>
               <span class="muted pomo-calib" title="已完成番茄/番茄估算（与待办同步），点击可校准" @click="openPomoCalib(a)">🍅 {{ a.pomoCount || 0 }}/{{ actPomoTotal(a) }}</span>
-              <button v-if="!a.repeat?.type" class="btn sm prog-btn" :class="{ on: progPct(a) > 0 }"
-                      :title="progPct(a) ? `当前进度 ${progPct(a)}%，点击设置最新进度` : '设置当前累计进度（满 100% 自动完成）'"
-                      @click="openProgress(a)">📈 {{ progPct(a) ? progPct(a) + '%' : '进度' }}</button>
               <button class="btn sm sub-btn" :class="{ on: ckTotal(a) > 0 && ckDone(a) === ckTotal(a) }"
                       :title="ckTotal(a) ? `子项 ${ckDone(a)}/${ckTotal(a)}（点击展开/收起）` : '把这条行动拆成多个子项'"
                       @click="toggleChecklist(a)">☑<span v-if="ckTotal(a)"> {{ ckDone(a) }}/{{ ckTotal(a) }}</span></button>
@@ -747,13 +744,8 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 .act-line:hover { background: var(--surface-2); }
 /* 行尾操作区：桌面端与行动名同排、贴行尾（视觉同重构前）；手机端换行规则见移动端媒体查询 */
 .row-acts { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
-.completion-btn.on { background: var(--primary-soft); border-radius: 6px; }
 /* 表单里紧跟字段的一句说明：比正文小一号、贴紧上方字段（不额外撑高弹窗） */
 .form-hint { font-size: 12px; margin: -4px 0 8px; }
-
-/* 进度按钮：与子项/番茄开关同尺寸，记过进度后点亮 */
-.prog-btn { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
-.prog-btn.on { color: var(--primary); border-color: var(--primary-border); background: var(--primary-soft); }
 
 /* 记录进度弹窗的样式跟随组件（ProgressModal.vue），这里只留行动行上的按钮 */
 .pomo-calib { cursor: pointer; border-bottom: 1px dashed transparent; }
@@ -790,7 +782,6 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
   .row-acts { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 6px; row-gap: 8px; }
   .act-block + .act-block { border-top: 1px solid var(--border); }
   .act-line .icon-btn { width: 36px; height: 36px; min-width: 36px; font-size: 15px; }
-  .prog-btn { padding: 7px 12px; min-height: 36px; }
   .sub-btn { padding: 7px 12px; min-height: 36px; }
 
   /* 项目详情头部：标题块与操作按钮改为上下堆叠（按钮组自身靠 .flex 的换行继续折行） */

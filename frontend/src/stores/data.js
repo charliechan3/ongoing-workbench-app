@@ -128,13 +128,14 @@ export function shelveDateOf(todo, actions = [], todos = []) {
 
 /* ============ 行动进度（2026-10-17）============
    非重复行动才有"进度"这套：填入的是**最终累计进度**（0-100 的绝对值），
-   直接写进 action.progress，不再做加法。日志按天留档 progressLog = { 'YYYY-MM-DD': { add, note } }，
-   add 记的是当天净变化（本次值 - 上次值，可能为负，比如把进度往下修），
-   同一天多次记录会合并成当天一条（变化量相加、备注用「；」拼接）。
-   兼容早期可能存成纯数字的日志值。 */
+   直接写进 action.progress，不再做加法。日志按天留档 progressLog = { 'YYYY-MM-DD': { base, add, note } }：
+   - base：当天第一次记录前的累计进度（当天起点），当天不变；
+   - add：当天净变化 = 当天最新累计进度 − base（可能为负，比如把进度往下修）；
+   - note：当天那一条备注。
+   同一天多次记录**只保留最新一条**：add 用「最新 − base」覆盖、note 覆盖，不累加不拼接。
+   兼容早期存成 { add, note } 或纯数字的旧值：读时兜底，写时若缺 base 用「当前进度 − 当天已记 add」反推。 */
 // 日志里的当天变化量，允许负数（把累计进度往下修时记负值，不丢真实变化）
 const logAddOf = (v) => Math.round(Number(v && typeof v === 'object' ? v.add : v) || 0)
-const logNoteOf = (v) => (v && typeof v === 'object' ? String(v.note || '') : '')
 export const progressOf = (action) => {
   const n = Number(action && action.progress)
   return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0
@@ -767,10 +768,10 @@ export const useDataStore = defineStore('data', {
           this.actions = this.actions.filter(x => x.id !== act.id)
         }
       }
-      // 删源待办 → 连带删它自动生成的续办提醒（否则会留下一条指向不存在待办的孤儿）
+      // 删源待办 → 连带删它自动生成的所有续办提醒（否则会留下指向不存在待办的孤儿）
       if (!todo.actionId && !todo.fromActionId && !todo.fromTodoId) {
-        const carry = this.todos.find(t => t.fromTodoId === todo.id)
-        if (carry) {
+        const carries = this.todos.filter(t => t.fromTodoId === todo.id)
+        for (const carry of carries) {
           try { await api.todos.remove(carry.id) } catch (e) { /* 已不存在也不阻塞 */ }
           this.todos = this.todos.filter(x => x.id !== carry.id)
           await this._purgeChecklist({ todoId: carry.id })
@@ -788,8 +789,8 @@ export const useDataStore = defineStore('data', {
       if (isRepeat(act)) return this.toggleRepeat(act, today())
       const toDone = todo.status !== 'done'
       const patch = { status: toDone ? 'done' : 'todo', doneDate: toDone ? today() : null }
-      // 纯待办是被"进度满 100%"自动勾上的：取消勾选 = 重新开始，清空进度与日志
-      if (!toDone && !act && todoProgressOf(todo) >= 100) { patch.progress = 0; patch.progressLog = {} }
+      // 完成状态与进度彻底解绑：勾选/取消勾选只改 status/doneDate，
+      // 不动 progress / progressLog（进度记录、进度里的最近记录都保留，不被清空）
       await this.update('todos', todo.id, patch, { silent: true })
       if (act) {
         const dd = [...(act.doneDates || [])]
@@ -805,7 +806,7 @@ export const useDataStore = defineStore('data', {
         if (act) await this.update('actions', act.id, { pomoCount: (act.pomoCount || 0) + 1 }, { silent: true })
       }
       // 纯待办：勾完成 / 取消勾选都要让它的续办提醒跟着变（完成→删、重新打开→补）
-      if (!act) await this._syncTodoCarry({ ...todo, ...patch })
+      if (!act && !todo.fromActionId && !todo.fromTodoId) await this._syncTodoCarry({ ...todo, ...patch })
     },
 
     // 重复行动"某日实例"切换完成：只把该日增/删到 doneDates；行动与 todo 的"今日态"随之同步
@@ -920,8 +921,8 @@ export const useDataStore = defineStore('data', {
       if (todo) {
         await this.update('todos', todo.id, { status: nxt.status, doneDate: nxt.status === 'done' ? today() : null }, { silent: true })
       }
-      // 手动勾完成 → 进度续办提醒已无意义，直接清掉（取消完成不会反向重建，避免打扰）
-      if (nxt.status === 'done') await this._syncCarryTodo({ ...act, ...nxt })
+      // 勾选完成只表达「今天做了这一轮」，不删续办提醒：续办提醒由进度单独维护
+      // （未满 100% 每天补一条、满 100% 停止新增），与「完成状态」解绑 —— 今天做完了、但整体没到 100%，提醒该留还留。
       if (!done && this.settings.autoPomoOnAction && act.pomoCount == null) {
         await this.create('pomodoros', { date: today(), minutes: this.pomoMinutes, targetType: 'action', targetId: act.id, title: act.name }, { silent: true })
       }
@@ -929,49 +930,45 @@ export const useDataStore = defineStore('data', {
 
     /* ============ 行动进度（按天记录）============
        填进来的是**最终累计进度**（绝对值 0-100），不是"今天又推进了多少"，所以这里不做加法：
-       action.progress 直接置为填入值；日志按当天净变化（本次 - 上次）记一笔，
-       同一天多次记录以最新一次为准（变化量相加）、备注用「；」拼接。
-       未满 100% → 在待办「未分配」里保证有一条续办提醒（date 为空即落未分配组）；
-       满 100% → 行动自动置完成，并清掉那条续办提醒。
-       同一条行动同一时间只留一条未完成的续办提醒：勾掉/排期后仍在，改进度只更新它。 */
+       action.progress 直接置为填入值；日志按当天净变化（最新累计 − 当天起点）记一笔，
+       同一天多次记录只保留最新一条（add/note 覆盖，不累加）。
+       进度与完成状态彻底解耦：到 100% 也不自动置完成，完成状态只由用户手动勾选；
+       未满 100% → 在待办「未分配」里保证有一条续办提醒（date 为空即落未分配组），
+       满 100% → 停止新增续办（已存在的续办原样保留，不清）。 */
     async recordProgress(act, { set, note } = {}, opts = {}) {
       if (!act) return null
       const raw = Number(set)
       if (!Number.isFinite(raw)) return null
       const cur = progressOf(act)
-      const wasDone = act.status === 'done'
       const next = Math.max(0, Math.min(100, Math.round(raw)))
-      // 已完成但进度字段不足 100 时，填同样的值也算"取消完成"，不能当成没变化
-      if (next === cur && !(wasDone && next < 100)) {
+      if (next === cur) {
         if (!opts.silent) this.toast('进度没有变化，未记录', 'err')
         return null
       }
       const d = today()
       const log = { ...(act.progressLog || {}) }
       const prev = log[d]
+      const prevObj = prev && typeof prev === 'object' ? prev : { add: Number(prev) || 0, note: '' }
+      // 当天起点：已有 base 用 base；没有则反推（当前进度 − 当天已记净变化，对旧累加数据也精确）
+      const base = prevObj.base != null ? Number(prevObj.base) : (cur - logAddOf(prevObj))
       log[d] = {
-        add: logAddOf(prev) + (next - cur),
-        note: [logNoteOf(prev), String(note || '').trim()].filter(Boolean).join('；')
+        base,
+        add: next - base,                          // 当天净变化 = 最新累计 − 当天起点（覆盖，不累加）
+        note: String(note || '').trim() || prevObj.note || '' // 覆盖，不拼接
       }
       const patch = { progress: next, progressLog: log }
-      if (next >= 100) patch.status = 'done' // 进度满 = 行动完成（updateAction 会同步投影待办）
-      else if (wasDone) {
-        // 往下改进度 = 重新打开这条行动：状态回未完成、清掉今天的完成标记，
-        // 后面 _syncCarryTodo 会自动把续办提醒补回来（满 100% 时被清掉的那条）。
-        patch.status = 'todo'
-        const dd = [...(act.doneDates || [])]
-        if (dd.includes(d)) patch.doneDates = dd.filter(x => x !== d)
-      }
+      // 进度与完成状态彻底解耦：进度到 100% 也不自动置完成，完成状态只由用户手动勾选
       const saved = await this.updateAction(act.id, patch, { silent: true })
       await this._syncCarryTodo(saved)
-      if (!opts.silent) this.toast(next >= 100 ? `进度更新为 ${next}%，行动已完成 🎉` : `进度已更新为 ${next}%`)
+      if (!opts.silent) this.toast(`进度已更新为 ${next}%`)
       return saved
     },
 
     /* ============ 待办进度（纯待办自己记）============
        绑定行动的待办（actionId / fromActionId）说明进度记在行动上，这里直接转给
        recordProgress，保证「进行中」和「待办」两处看到的是同一份数据；
-       纯待办写自己的 progress / progressLog（同样是"最终累计值"，不做加法），满 100% 自动勾完成。 */
+       纯待办写自己的 progress / progressLog（同样是"最终累计值"，不做加法）；
+       进度与完成状态彻底解耦：到 100% 也不自动勾完成，完成状态只由用户手动勾选。 */
     async recordTodoProgress(todo, { set, note } = {}, opts = {}) {
       if (!todo) return null
       // 纯待办的续办提醒（fromTodoId）→ 进度记在源待办上，两处看到同一份
@@ -982,102 +979,120 @@ export const useDataStore = defineStore('data', {
       const raw = Number(set)
       if (!Number.isFinite(raw)) return null
       const cur = todoProgressOf(base)
-      const wasDone = base.status === 'done'
       const next = Math.max(0, Math.min(100, Math.round(raw)))
-      if (next === cur && !(wasDone && next < 100)) {
+      if (next === cur) {
         if (!opts.silent) this.toast('进度没有变化，未记录', 'err')
         return null
       }
       const d = today()
       const log = { ...(base.progressLog || {}) }
       const prev = log[d]
+      const prevObj = prev && typeof prev === 'object' ? prev : { add: Number(prev) || 0, note: '' }
+      // 当天起点：已有 base 用 base；没有则反推（当前进度 − 当天已记净变化）
+      const dayBase = prevObj.base != null ? Number(prevObj.base) : (cur - logAddOf(prevObj))
       log[d] = {
-        add: logAddOf(prev) + (next - cur),
-        note: [logNoteOf(prev), String(note || '').trim()].filter(Boolean).join('；')
+        base: dayBase,
+        add: next - dayBase,                       // 当天净变化 = 最新累计 − 当天起点（覆盖，不累加）
+        note: String(note || '').trim() || prevObj.note || '' // 覆盖，不拼接
       }
       const patch = { progress: next, progressLog: log }
-      if (next >= 100) { patch.status = 'done'; patch.doneDate = d }
-      else if (wasDone) { patch.status = 'todo'; patch.doneDate = null } // 往下改 = 重新打开
+      // 进度与完成状态彻底解耦：进度到 100% 也不自动勾完成，完成状态只由用户手动勾选
       const saved = await this.update('todos', base.id, patch, { silent: true })
       await this._syncTodoCarry(saved)
-      if (!opts.silent) this.toast(next >= 100 ? `进度更新为 ${next}%，已标记完成 🎉` : `进度已更新为 ${next}%`)
+      if (!opts.silent) this.toast(`进度已更新为 ${next}%`)
       return saved
     },
 
-    // 某行动的未完成续办提醒（同一时间只认一条）
+    // 某行动「今天」的续办提醒（carryDate 标记哪天推进；历史续办每天累积保留，不参与去重）
     _carryTodoOf(actionId) {
-      return this.todos.find(t => t.fromActionId === actionId && t.status !== 'done')
+      const d = today()
+      return this.todos.find(t => t.fromActionId === actionId && t.carryDate === d)
     },
 
-    /* 续办提醒的生成/更新/清理（只对非重复行动）：
-       - 进度满或行动已完成 → 删掉提醒（它是自动生成的辅助条目，留着只会变成脏数据）
-       - 否则 → 有就更新文案，没有就新建一条 date 为空的待办 */
+    /* 续办提醒的生成/更新（只对非重复行动）：
+       - 进度满 100% → 什么都不做（不再新增续办，已存在的续办原样保留）
+       - 否则 → 今天（carryDate=今天）没有就新增一条、有就更新文案；
+         历史续办（昨天的、前天的）原样保留、不做任何变动 —— 每条续办共享同一个进度百分比，
+         完成状态各自独立。date 始终为空，所有续办都落在「未分配」。
+       （续办一旦生成即永久保留，只能由用户手动删除；系统只负责"每天没到 100% 就补一条"） */
     async _syncCarryTodo(act) {
       if (!act || !act.id || isRepeat(act)) return
-      const open = this._carryTodoOf(act.id)
       const pct = progressOf(act)
-      if (act.status === 'done' || pct >= 100) {
-        if (!open) return
-        try { await api.todos.remove(open.id) } catch (e) { /* 已不存在也不阻塞 */ }
-        this.todos = this.todos.filter(x => x.id !== open.id)
-        await this._purgeChecklist({ todoId: open.id })
-        return
-      }
-      const text = `「${act.name}」继续推进`
-      const note = `行动「${act.name}」的续办提醒：当前完成 ${pct}%，还剩 ${100 - pct}%。`
-        + `子项与行动共用同一份（在哪里勾选都会同步）；在「进行中」更新进度会自动同步本条；满 100% 自动完成行动并清理本条。`
+      if (pct >= 100) return // 满 100%：停止新增，不删已有续办
+      const d = today()
+      const open = this._carryTodoOf(act.id)
       if (open) {
+        // 今天已有一条：只更新文案（进度百分比变了），不新增
+        const note = `行动「${act.name}」的续办提醒：当前完成 ${pct}%，还剩 ${100 - pct}%。`
         await this.update('todos', open.id, {
-          text, note, priority: act.priority || 'P3',
+          text: `「${act.name}」继续推进`, note, priority: act.priority || 'P3',
           projectId: act.projectId || null, taskId: act.taskId || null
         }, { silent: true })
         return
       }
+      // 今天还没有：新增一条（旧续办原样保留）
+      return this._createCarryTodo(act)
+    },
+
+    /* 新建一条行动续办（date 空 → 未分配），carryDate 标记它对应哪天推进 */
+    async _createCarryTodo(act) {
+      const d = today()
+      const pct = progressOf(act)
+      const text = `「${act.name}」继续推进`
+      const note = `行动「${act.name}」的续办提醒：当前完成 ${pct}%，还剩 ${100 - pct}%。`
       const t0 = {
         id: uid(), createdAt: now(), text, note, date: null, status: 'todo',
         priority: act.priority || 'P3', pomoCount: 0, pomoEstimate: 0,
         projectId: act.projectId || null, taskId: act.taskId || null,
+        carryDate: d,
         fromActionId: act.id // 标记来源：不是投影（不写 actionId），所以不会参与双向同步
       }
       const saved = await api.todos.create(t0)
       this.todos.unshift(saved || t0)
+      return saved || t0
     },
 
-    /* 纯待办的续办提醒（与行动那套同规则，2026-10-17）：
+    /* 纯待办的续办提醒（与行动那套同规则）：
        待办记了进度未满 100% → 在「未分配」保证一条「「X」继续推进」；
-       满 100%、已完成、进度被改回 0 → 删掉提醒（自动生成的辅助条目，不留脏数据）。
+       满 100%、进度被改回 0 → 停止新增（不删已有续办）。
        只给"原件"生成：投影待办（actionId）、行动续办（fromActionId）、待办续办（fromTodoId）都不再套一层。
        子项与源待办共用一份（checklistParentOf 已把 fromTodoId 指回源待办）。 */
     async _syncTodoCarry(todo) {
       if (!todo || !todo.id) return
       if (todo.actionId || todo.fromActionId || todo.fromTodoId) return
-      const open = this.todos.find(t => t.fromTodoId === todo.id && t.status !== 'done')
       const pct = todoProgressOf(todo)
-      if (todo.status === 'done' || pct >= 100 || pct <= 0) {
-        if (!open) return
-        try { await api.todos.remove(open.id) } catch (e) { /* 已不存在也不阻塞 */ }
-        this.todos = this.todos.filter(x => x.id !== open.id)
-        await this._purgeChecklist({ todoId: open.id })
-        return
-      }
-      const text = `「${todo.text}」继续推进`
-      const note = `待办「${todo.text}」的续办提醒：当前完成 ${pct}%，还剩 ${100 - pct}%。`
-        + `子项与源待办共用同一份（在哪里勾选都会同步）；在「待办」更新进度会自动同步本条；满 100% 自动完成并清理本条。`
+      if (pct >= 100 || pct <= 0) return // 满 100% / 归零：停止新增，不删已有续办
+      const d = today()
+      const open = this.todos.find(t => t.fromTodoId === todo.id && t.carryDate === d)
       if (open) {
+        // 今天已有一条：只更新文案（进度百分比变了），不新增
+        const note = `待办「${todo.text}」的续办提醒：当前完成 ${pct}%，还剩 ${100 - pct}%。`
         await this.update('todos', open.id, {
-          text, note, priority: todo.priority || 'P3',
+          text: `「${todo.text}」继续推进`, note, priority: todo.priority || 'P3',
           projectId: todo.projectId || null, taskId: todo.taskId || null
         }, { silent: true })
         return
       }
+      // 今天还没有：新增一条（旧续办原样保留）
+      return this._createTodoCarry(todo)
+    },
+
+    /* 新建一条纯待办续办（date 空 → 未分配），carryDate 标记它对应哪天推进 */
+    async _createTodoCarry(todo) {
+      const d = today()
+      const pct = todoProgressOf(todo)
+      const text = `「${todo.text}」继续推进`
+      const note = `待办「${todo.text}」的续办提醒：当前完成 ${pct}%，还剩 ${100 - pct}%。`
       const t0 = {
         id: uid(), createdAt: now(), text, note, date: null, status: 'todo',
         priority: todo.priority || 'P3', pomoCount: 0, pomoEstimate: 0,
         projectId: todo.projectId || null, taskId: todo.taskId || null,
+        carryDate: d,
         fromTodoId: todo.id // 标记来源：不是投影（不写 actionId），所以不参与双向同步
       }
       const saved = await api.todos.create(t0)
       this.todos.unshift(saved || t0)
+      return saved || t0
     },
     // 批量创建（repeat 规则）
     async batchCreateTasks(rule, dates, type = 'task') {
