@@ -84,6 +84,50 @@ const actSrc = (todo) => actOf(todo) || (todo && todo.fromActionId ? actMap.valu
 // 纯待办进度续办提醒（fromTodoId）→ 源待办
 const todoMap = computed(() => Object.fromEntries(store.todos.map(t => [t.id, t])))
 const carryTodoOf = (todo) => (todo && todo.fromTodoId ? todoMap.value[todo.fromTodoId] || null : null)
+
+/* ---- 筛选（按项目 / 只看未完成）----
+   项目归属以「行动」为真相：投影待办、行动续办提醒都看背后行动，纯待办看自己。
+   这样在「进行中」给行动换了项目，待办侧的筛选结果会跟着走，不会两边对不上。 */
+const NO_PROJECT = '__none__' // 「未绑定项目」的筛选值（区别于「全部」的空字符串）
+const filterProject = ref('')
+const onlyOpen = ref(false)
+const projectOf = (todo) => {
+  const act = actSrc(todo)
+  const src = carryTodoOf(todo)
+  return (act && act.projectId) || (todo && todo.projectId) || (src && src.projectId) || ''
+}
+const matchFilter = (todo) => {
+  if (!filterProject.value) return true
+  const pid = projectOf(todo)
+  return filterProject.value === NO_PROJECT ? !pid : pid === filterProject.value
+}
+const hasFilter = computed(() => !!filterProject.value || onlyOpen.value)
+// 下拉里的项目按名称排（区域→项目的层级在「进行中」看，这里只做扁平选择）
+const projectOptions = computed(() =>
+  [...store.projects].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh')))
+// 当前筛选下的未完成条数（与 openTodos 同口径：不含已搁置、不含已完成）
+const filteredOpen = computed(() => store.openTodos.filter(matchFilter).length)
+function clearFilter() { filterProject.value = ''; onlyOpen.value = false }
+const filterLabel = computed(() => {
+  if (!filterProject.value) return ''
+  if (filterProject.value === NO_PROJECT) return '未绑定项目'
+  return store.projectMap[filterProject.value]?.name || '已删除的项目'
+})
+// 筛选落在具体项目上时，新建的待办默认归到该项目——否则创建完立刻被筛选隐藏，看起来像"没加上"
+const filterProjectId = computed(() => (filterProject.value && filterProject.value !== NO_PROJECT ? filterProject.value : null))
+function openAdd() {
+  addForm.value = { ...addForm.value, projectId: filterProjectId.value || '', taskId: '' }
+  showAdd.value = true
+  quickAdd.value = false
+}
+// 快速添加：同样跟着项目筛选走（「未绑定项目」筛选下保持纯待办）
+async function quickSubmit() {
+  const text = newText.value.trim()
+  if (!text) return
+  await store.addTodo({ text, date: today(), status: 'todo', priority: 'P3', projectId: filterProjectId.value })
+  newText.value = ''
+  quickAdd.value = false
+}
 /* 一条待办的进度：
    - 投影待办 / 行动续办提醒 → 看它背后的行动
    - 纯待办的续办提醒 → 看源待办（共享同一份进度百分比）
@@ -153,16 +197,18 @@ const groups = computed(() => {
   const sortInner = (list) => [...list].sort((x, y) =>
     x.done - y.done || (x.todo.priority || 'P3').localeCompare(y.todo.priority || 'P3'))
   const push = (f, todo, done, isRep) => {
+    if (onlyOpen.value && done) return // 「只看未完成」按行过滤：重复待办按当天实例的完成态判断
     const day = winMap[f] || { f, label: f, isToday: f === t }
     if (!gmap[f]) { gmap[f] = { label: day.label, date: f, isToday: day.isToday, list: [] }; g.push(gmap[f]) }
     gmap[f].list.push({ todo, done, repeat: isRep, day: f })
   }
   for (const todo of store.todos) {
-    if (shelved(todo)) continue // 搁置的不进列表，统一收在「搁置区」
+    if (shelved(todo) || !matchFilter(todo)) continue // 搁置的不进列表；不符合项目筛选的也不进
     const a = actOf(todo)
     if (isRepeat(a)) continue // 重复待办下面按窗口逐日展开
     if (!todo.date) {
       // 未分配：行动创建时未填开始时间 → 待办没有 date 锚点 → 单独成组 + 置顶
+      if (onlyOpen.value && todo.status === 'done') continue
       unassigned.push({ todo, done: todo.status === 'done', repeat: false, day: UNASSIGNED_KEY })
       continue
     }
@@ -171,7 +217,7 @@ const groups = computed(() => {
   }
   for (const day of listWindow.value) {
     for (const todo of store.todos) {
-      if (shelved(todo)) continue
+      if (shelved(todo) || !matchFilter(todo)) continue
       const a = actOf(todo)
       if (isRepeat(a)) { if (todoHitsDay(todo, a, day.f)) push(day.f, todo, repeatDoneOn(a, day.f), true); continue }
       // 跨日 todo：区间命中窗口日时逐日展开（锚点日已由上面落组，跳过避免重复）
@@ -242,6 +288,8 @@ const { renamingId, renameText, startRename, commitRename, cancelRename, renameR
 const PAGE = 5
 const visibleCount = ref(PAGE)
 const shownGroups = computed(() => groups.value.slice(0, visibleCount.value))
+// 换筛选条件后回到第一批：否则可能停在上一次滚动到的批次，看起来像「筛出来是空的」
+watch([filterProject, onlyOpen], () => { visibleCount.value = PAGE })
 const scrollEl = ref(null)
 const sentinel = ref(null)
 let io = null
@@ -272,14 +320,16 @@ const calDays = computed(() => {
     const f = fmtDate(d)
     const cells = []
     for (const todo of store.todos) {
-      if (shelved(todo)) continue // 搁置的不进日历
+      if (shelved(todo) || !matchFilter(todo)) continue // 搁置 / 项目筛选：与列表同一口径
       const a = actOf(todo)
       if (isRepeat(a)) {
         // 重复行动：规则命中且处于生效区间才显示当天实例；完成态 = doneDates 含该日
         if (!repeatHits(a, f)) continue
         if (todo.startDate && f < todo.startDate) continue
         if (todo.endDate && f > todo.endDate) continue
-        cells.push({ todo, act: a, f, repeat: true, done: repeatDoneOn(a, f) })
+        const done = repeatDoneOn(a, f)
+        if (onlyOpen.value && done) continue // 「只看未完成」按当天的实例态过滤
+        cells.push({ todo, act: a, f, repeat: true, done })
         continue
       }
       // 非重复：跨日必须同时有 startDate + endDate（缺一边都按单日锚定 date，避免"有开始无结束"被当成无限区间满月漂浮）
@@ -287,7 +337,7 @@ const calDays = computed(() => {
       const inDay = span
         ? (todo.startDate <= f && todo.endDate >= f)
         : (todo.date === f)
-      if (inDay) cells.push({ todo, act: null, f, repeat: false, done: todo.status === 'done' })
+      if (inDay && !(onlyOpen.value && todo.status === 'done')) cells.push({ todo, act: null, f, repeat: false, done: todo.status === 'done' })
     }
     cells.sort((x, y) => x.done - y.done || (x.todo.priority || 'P3').localeCompare(y.todo.priority || 'P3'))
     days.push({ f, day: d.getDate(), inMonth: d.getMonth() === m, todos: cells, date: f })
@@ -593,7 +643,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
           <button class="seg-btn" :class="{ on: view === 'list' }" @click="view = 'list'">列表</button>
           <button class="seg-btn" :class="{ on: view === 'calendar' }" @click="view = 'calendar'">日历</button>
         </div>
-        <button class="btn primary" @click="showAdd = true; quickAdd = false">＋ 添加待办</button>
+        <button class="btn primary" @click="openAdd">＋ 添加待办</button>
       </div>
     </div>
 
@@ -656,7 +706,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 
     <!-- 快速添加条 -->
     <div class="card mb-16" v-if="quickAdd && !showAdd">
-      <form class="flex" @submit.prevent="store.addTodo({ text: newText, date: today(), status: 'todo', priority: 'P3' }).then(() => { newText = ''; quickAdd = false })">
+      <form class="flex" @submit.prevent="quickSubmit">
         <input v-model="newText" class="input grow" placeholder="输入待办内容，回车快速创建…" autofocus />
         <button class="btn primary" type="submit">创建</button>
       </form>
@@ -665,6 +715,21 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
       <div class="flex" @click="quickAdd = true" style="cursor:text">
         <span style="color:var(--text-3)">＋ 添加待办…</span>
       </div>
+    </div>
+
+    <!-- 筛选行：按项目 + 只看未完成（列表与日历同一口径，切视图不丢筛选） -->
+    <div class="filter-bar mb-16">
+      <label class="filter-field">
+        <span class="filter-label">项目</span>
+        <select v-model="filterProject" class="select filter-select" aria-label="按项目筛选待办">
+          <option value="">全部项目</option>
+          <option :value="NO_PROJECT">未绑定项目</option>
+          <option v-for="p in projectOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
+      </label>
+      <button class="chip" :class="{ on: onlyOpen }" :aria-pressed="onlyOpen" @click="onlyOpen = !onlyOpen">仅看未完成</button>
+      <span v-if="hasFilter" class="filter-sum muted">{{ filterLabel || '全部项目' }} · 未完成 {{ filteredOpen }} 条</span>
+      <button v-if="hasFilter" class="btn ghost sm filter-clear" @click="clearFilter">清除筛选</button>
     </div>
 
     <!-- 列表视图 -->
@@ -728,6 +793,10 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
         </div>
       </div>
       <!-- 列表为空（或只剩搁置项）时第一行不存在：入口单独占一行右侧，别让搁置区打不开 -->
+      <div v-if="!shownGroups.length && hasFilter" class="card filter-empty">
+        <div class="muted">没有符合筛选条件的待办</div>
+        <button class="btn sm" style="margin-top:10px" @click="clearFilter">清除筛选</button>
+      </div>
       <div v-if="!shownGroups.length" class="shelf-bar">
         <button class="shelve-chip" :class="{ on: shelvedRows.length }" title="暂时不做的条目都收在这里，选个日期就能放回待办" @click="openShelved">
           <span>🗄 搁置区</span>
@@ -942,6 +1011,19 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
 .seg-btn { border: none; background: transparent; padding: 5px 14px; border-radius: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
 .seg-btn.on { background: var(--surface); color: var(--primary); font-weight: 600; box-shadow: var(--shadow-sm); }
 
+/* ---- 筛选行（项目 + 仅看未完成）：与「媒体」页同一套 chip 观感 ---- */
+.filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.filter-field { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.filter-label { font-size: 12px; color: var(--text-3); flex-shrink: 0; }
+.filter-select { width: auto; min-width: 140px; max-width: 240px; padding-top: 5px; padding-bottom: 5px; }
+.chip { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 6px 15px; font-size: 13px; cursor: pointer; color: var(--text-2); transition: color .13s, background .13s, border-color .13s; }
+.chip:hover { border-color: var(--primary-border); color: var(--primary); }
+.chip.on { background: var(--primary-soft); border-color: var(--primary-border); color: var(--primary); font-weight: 600; }
+.filter-sum { font-size: 12px; }
+/* 摘要与「清除」紧跟筛选控件，别被推到屏幕另一头（桌面端看起来像两个不相干的元素） */
+.filter-clear { padding-left: 4px; padding-right: 4px; }
+.filter-empty { text-align: center; padding: 20px; margin-bottom: 12px; }
+
 .group-head { display: flex; align-items: baseline; gap: 8px; padding: 0 4px 8px; font-weight: 600; font-size: 14px; }
 .todo-row { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; }
 .todo-row:hover { background: var(--surface-2); }
@@ -1035,6 +1117,12 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
   /* 列表/日历切换与「添加待办」：整行铺满，按钮均分，触屏点击更稳 */
   .seg { display: flex; width: 100%; }
   .seg-btn { flex: 1; padding: 10px 0; font-size: 13.5px; }
+
+  /* 筛选行：项目下拉独占一行铺满（长项目名不被截断），第二行是「仅看未完成」+ 摘要 + 清除 */
+  .filter-field { flex: 1 1 100%; }
+  .filter-select { flex: 1; width: 100%; max-width: none; min-width: 0; min-height: 40px; }
+  .chip { padding: 9px 16px; min-height: 36px; }
+  .filter-clear { min-height: 36px; }
 
   /* 待办行：勾选框 + 内容独占首行，操作按钮整体落到第二行 */
   .todo-row { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; padding: 10px 4px; }
