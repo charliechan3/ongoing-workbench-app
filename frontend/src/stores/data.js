@@ -126,6 +126,30 @@ export function shelveDateOf(todo, actions = [], todos = []) {
   return base.shelvedAt || ''
 }
 
+/* ============ 项目开关：行动是否进待办（2026-10-26）============
+   项目上可以关掉「行动同步到待办」：这类项目的行动仍留在「进行中」，
+   但它的投影待办、续办提醒不再出现在待办页、日历、首页今日待办与侧栏待办计数里。
+   纯待办（没绑行动的）不受影响 —— 开关管的是"行动"。
+   老数据没有 showActionsInTodo 字段：只有显式 false 才隐藏，其余一律按展示算。 */
+export function actionProjectId(action, tasks = []) {
+  if (!action) return ''
+  if (action.projectId) return action.projectId
+  if (action.taskId) {
+    const t = (tasks || []).find(x => x.id === action.taskId)
+    if (t && t.projectId) return t.projectId
+  }
+  return ''
+}
+export function isTodoHiddenByProject(todo, actions = [], projects = [], tasks = []) {
+  if (!todo) return false
+  const aid = todo.actionId || todo.fromActionId
+  if (!aid) return false // 纯待办：不归这条开关管
+  const pid = actionProjectId((actions || []).find(x => x.id === aid), tasks)
+  if (!pid) return false
+  const p = (projects || []).find(x => x.id === pid)
+  return !!p && p.showActionsInTodo === false
+}
+
 /* ============ 行动进度（2026-10-17）============
    非重复行动才有"进度"这套：填入的是**最终累计进度**（0-100 的绝对值），
    直接写进 action.progress，不再做加法。日志按天留档 progressLog = { 'YYYY-MM-DD': { base, add, note } }：
@@ -311,10 +335,13 @@ export const useDataStore = defineStore('data', {
 
     // 未完成待办（不含已搁置的：搁置是"收起来"，不该继续算在待办数里）
     openTodos: s => s.todos
-      .filter(t => t.status !== 'done' && !isTodoShelved(t, s.actions, s.todos))
+      .filter(t => t.status !== 'done' && !isTodoShelved(t, s.actions, s.todos)
+        && !isTodoHiddenByProject(t, s.actions, s.projects, s.tasks))
       .sort((a, b) => (a.priority || 'P3').localeCompare(b.priority || 'P3')),
     doneTodos: s => s.todos.filter(t => t.status === 'done'),
-    todayTodos: s => s.todos.filter(t => (t.date === today() && t.status !== 'done' && !isTodoShelved(t, s.actions, s.todos))),
+    todayTodos: s => s.todos.filter(t => (t.date === today() && t.status !== 'done'
+      && !isTodoShelved(t, s.actions, s.todos)
+      && !isTodoHiddenByProject(t, s.actions, s.projects, s.tasks))),
 
     // 搁置区：已搁置的代表条目（投影待办 / 源待办），按搁置日期倒序
     shelvedTodos: s => s.todos
@@ -328,7 +355,9 @@ export const useDataStore = defineStore('data', {
       const t = today()
       const actMap = Object.fromEntries(s.actions.map(a => [a.id, a]))
       const rows = s.todos
-        .filter(td => !isTodoShelved(td, s.actions, s.todos) && todoHitsDay(td, td.actionId ? actMap[td.actionId] : null, t))
+        .filter(td => !isTodoShelved(td, s.actions, s.todos)
+          && !isTodoHiddenByProject(td, s.actions, s.projects, s.tasks)
+          && todoHitsDay(td, td.actionId ? actMap[td.actionId] : null, t))
         .map(td => {
           const a = td.actionId ? actMap[td.actionId] : null
           return {

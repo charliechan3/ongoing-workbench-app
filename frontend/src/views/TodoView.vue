@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf, checklistParentOf, progressOf, todoProgressOf, isTodoShelved } from '../stores/data'
+import { useDataStore, today, fmtDate, todoHitsDay, repeatHits, repeatDoneOn, isRepeat, checklistItemsOf, checklistParentOf, progressOf, todoProgressOf, isTodoShelved, isTodoHiddenByProject } from '../stores/data'
 import { useInlineRename } from '../composables/useInlineRename'
 import Modal from '../components/Modal.vue'
 import Checklist from '../components/Checklist.vue'
@@ -102,6 +102,11 @@ const matchFilter = (todo) => {
   return filterProject.value === NO_PROJECT ? !pid : pid === filterProject.value
 }
 const hasFilter = computed(() => !!filterProject.value || onlyOpen.value)
+// 项目里关掉「行动同步到待办」后：该项目的行动（投影待办 + 续办提醒）不进待办/日历；纯待办不受影响
+const hidden = (todo) => isTodoHiddenByProject(todo, store.actions, store.projects, store.tasks)
+// 页头统计：隐藏的条数单独点出来，避免"共 N 条"和列表对不上
+const hiddenTotal = computed(() => store.todos.filter(hidden).length)
+const visibleTotal = computed(() => store.todos.length - hiddenTotal.value)
 // 下拉里的项目按名称排（区域→项目的层级在「进行中」看，这里只做扁平选择）
 const projectOptions = computed(() =>
   [...store.projects].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh')))
@@ -203,7 +208,7 @@ const groups = computed(() => {
     gmap[f].list.push({ todo, done, repeat: isRep, day: f })
   }
   for (const todo of store.todos) {
-    if (shelved(todo) || !matchFilter(todo)) continue // 搁置的不进列表；不符合项目筛选的也不进
+    if (shelved(todo) || hidden(todo) || !matchFilter(todo)) continue // 搁置 / 项目关了行动进待办 / 不符合项目筛选：都不进列表
     const a = actOf(todo)
     if (isRepeat(a)) continue // 重复待办下面按窗口逐日展开
     if (!todo.date) {
@@ -217,7 +222,7 @@ const groups = computed(() => {
   }
   for (const day of listWindow.value) {
     for (const todo of store.todos) {
-      if (shelved(todo) || !matchFilter(todo)) continue
+      if (shelved(todo) || hidden(todo) || !matchFilter(todo)) continue
       const a = actOf(todo)
       if (isRepeat(a)) { if (todoHitsDay(todo, a, day.f)) push(day.f, todo, repeatDoneOn(a, day.f), true); continue }
       // 跨日 todo：区间命中窗口日时逐日展开（锚点日已由上面落组，跳过避免重复）
@@ -320,7 +325,7 @@ const calDays = computed(() => {
     const f = fmtDate(d)
     const cells = []
     for (const todo of store.todos) {
-      if (shelved(todo) || !matchFilter(todo)) continue // 搁置 / 项目筛选：与列表同一口径
+      if (shelved(todo) || hidden(todo) || !matchFilter(todo)) continue // 搁置 / 项目关了行动进待办 / 项目筛选：与列表同一口径
       const a = actOf(todo)
       if (isRepeat(a)) {
         // 重复行动：规则命中且处于生效区间才显示当天实例；完成态 = doneDates 含该日
@@ -636,7 +641,7 @@ const repeatLabel = (r) => r && r.type ? (r.type === 'daily' ? '每日' : r.type
     <div class="page-head">
       <div>
         <div class="page-title">todo</div>
-        <div class="page-sub">待办与行动互相同步。共 {{ store.todos.length }} 条，{{ store.openTodos.length }} 条待办。</div>
+        <div class="page-sub">待办与行动互相同步。共 {{ visibleTotal }} 条，{{ store.openTodos.length }} 条待办。<template v-if="hiddenTotal"> 另有 {{ hiddenTotal }} 条待办按项目设置不展示。</template></div>
       </div>
       <div class="flex gap-8">
         <div class="seg">

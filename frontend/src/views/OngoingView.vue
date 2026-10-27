@@ -102,13 +102,16 @@ function openCreate(type, data = {}) {
   modalType.value = type
   editing.value = null
   // 区域默认字段较精简（仅 name/note/color），与项目区分开避免把项目专属字段混进区域
-  form.value = type === 'area' ? { color: '#9b6dff', ...data } : { priority: 'P3', status: 'todo', ...data }
+  form.value = type === 'area'
+    ? { color: '#9b6dff', ...data }
+    : { priority: 'P3', status: 'todo', showActionsInTodo: true, ...data }
   showModal.value = true
 }
 function openEdit(type, item) {
   modalType.value = type
   editing.value = item
-  form.value = { ...item }
+  // 老项目没有这个字段：null/undefined 一律按「展示在待办」处理，别让开关显示成关闭
+  form.value = type === 'area' ? { ...item } : { ...item, showActionsInTodo: item.showActionsInTodo !== false }
   showModal.value = true
 }
 async function save() {
@@ -395,6 +398,7 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
             </div>
             <div class="flex gap-8">
               <StatusBadge :status="selectedProject.status" />
+              <span v-if="selectedProject.showActionsInTodo === false" class="tag" title="该项目在设置里关闭了「行动同步到待办」">行动不进待办</span>
               <button class="btn sm" @click="openEdit('project', selectedProject)">编辑</button>
               <button class="btn sm primary" @click="openTask()">＋ 任务</button>
               <button class="btn sm" @click="openAction(null, null)">＋ 行动</button>
@@ -564,6 +568,11 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
             <input v-model="form.startDate" type="date" class="input" /><input v-model="form.endDate" type="date" class="input" />
           </div>
         </label>
+        <!-- 待办可见性：关掉后该项目的行动只留在进行中，不再进待办/日历/首页今日待办 -->
+        <div class="pref-line">
+          <div class="pref-text"><span class="pref-name">行动同步到待办</span><span class="muted">关闭后只留在进行中</span></div>
+          <input v-model="form.showActionsInTodo" type="checkbox" class="switch" aria-label="行动同步到待办" />
+        </div>
       </template>
       <template #foot>
         <button class="btn" @click="showModal = false">取消</button>
@@ -714,6 +723,15 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
 .seg-btn { border: none; background: transparent; padding: 5px 14px; border-radius: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
 .seg-btn.on { background: var(--surface); color: var(--primary); font-weight: 600; box-shadow: var(--shadow-sm); }
 
+/* 项目弹窗里的开关行（行动是否进待办）：说明在左、开关在右 */
+.pref-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0 0; border-top: 1px solid var(--border); }
+.pref-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pref-name { font-weight: 500; margin-right: 10px; }
+.switch { width: 38px; height: 21px; appearance: none; -webkit-appearance: none; background: var(--border-strong); border-radius: 999px; position: relative; cursor: pointer; transition: background .15s; flex-shrink: 0; margin: 0; }
+.switch:checked { background: var(--primary); }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch:checked::after { left: 19px; }
+
 .area-card { cursor: pointer; border-color: var(--border); transition: all .15s; }
 .area-card:hover { border-color: var(--primary-border); }
 .area-card.on { border-color: var(--primary); background: var(--primary-soft); }
@@ -775,6 +793,13 @@ const areaOpts = computed(() => [{ id: 'all', name: '全部区域' }, ...store.a
   /* 区域卡片：管理模式的四个小图标按钮加大热区 */
   .area-manage { gap: 4px; }
   .area-manage .icon-btn { width: 38px; height: 38px; font-size: 16px; }
+
+  /* 项目弹窗的开关：触屏加大热区，说明文字自己换行 */
+  .pref-line { gap: 10px; }
+  .pref-line > div { flex: 1; }
+  .switch { width: 46px; height: 26px; }
+  .switch::after { width: 22px; height: 22px; }
+  .switch:checked::after { left: 22px; }
 
   /* 行动行：勾选框 + 行动名独占首行，操作按钮整体落到第二行 */
   .act-line { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; padding: 10px 4px 10px 8px; }
